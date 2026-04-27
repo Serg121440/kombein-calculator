@@ -44,15 +44,15 @@ function classifyOzonOperation(opType: string, amount: number): TransactionType 
 }
 
 interface OzonProductInfo {
-  id: number;
+  product_id: number;
   offer_id: string;
   name: string;
-  price: string;
-  purchase_price?: string;
-  weight?: number;
-  depth?: number;
-  width?: number;
-  height?: number;
+  selling_price: number;
+  min_price: number;
+  depth_cm: number;
+  width_cm: number;
+  height_cm: number;
+  weight_kg: number;
 }
 
 interface OzonOperation {
@@ -89,14 +89,14 @@ async function syncOzon(
     .map((p) => ({
       storeId: store.id,
       sku: String(p.offer_id),
-      name: p.name ?? `Товар ${p.id}`,
+      name: p.name ?? `Товар ${p.product_id}`,
       category: "",
-      purchasePrice: parseFloat(p.purchase_price ?? "0") || 0,
-      sellingPrice: parseFloat(p.price ?? "0") || 0,
-      weightKg: (p.weight ?? 0) / 1000,
-      lengthCm: p.depth ?? 0,
-      widthCm: p.width ?? 0,
-      heightCm: p.height ?? 0,
+      purchasePrice: 0,
+      sellingPrice: p.selling_price,
+      weightKg: p.weight_kg,
+      lengthCm: p.depth_cm,
+      widthCm: p.width_cm,
+      heightCm: p.height_cm,
       active: true,
     }));
 
@@ -121,7 +121,9 @@ async function syncOzon(
   );
 
   const transactions: Omit<Transaction, "id">[] = (txData.operations ?? []).map((op) => {
-    const postingSku = String(op.posting?.items?.[0]?.sku ?? "");
+    // Ozon items have offer_id (string SKU), not numeric sku
+    const offerItem = op.posting?.items?.[0] as unknown as { offer_id?: string; sku?: number };
+    const postingSku = offerItem?.offer_id ?? String(offerItem?.sku ?? "");
     return {
       storeId: store.id,
       sku: postingSku || undefined,
