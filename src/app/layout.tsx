@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import { Sidebar } from "@/components/Sidebar";
-import { Topbar } from "@/components/Topbar";
+import { AppShell } from "@/components/AppShell";
 import { SeedInitializer } from "@/components/SeedInitializer";
 
 export const metadata: Metadata = {
@@ -19,13 +18,7 @@ export default function RootLayout({
     <html lang="ru">
       <body className="min-h-screen">
         <SeedInitializer />
-        <div className="flex min-h-screen">
-          <Sidebar />
-          <div className="flex flex-1 flex-col">
-            <Topbar />
-            <main className="flex-1 p-6">{children}</main>
-          </div>
-        </div>
+        <AppShell>{children}</AppShell>
       </body>
     </html>
   );
