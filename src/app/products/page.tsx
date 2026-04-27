@@ -149,7 +149,28 @@ export default function ProductsPage() {
       </div>
 
       {filtered.length === 0 ? (
-        <div className="card p-8 text-center text-gray-600">Товары не найдены.</div>
+        <div className="card">
+          <div className="empty-state">
+            <svg className="w-12 h-12 opacity-20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden><path d="M20 7H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2z"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>
+            <p className="empty-state-title">
+              {search || storeFilter !== "ALL" ? "Товары не найдены" : "Товаров пока нет"}
+            </p>
+            <p className="empty-state-desc">
+              {search || storeFilter !== "ALL"
+                ? "Попробуйте изменить фильтры или поисковый запрос."
+                : "Добавьте первый товар или синхронизируйте магазин."}
+            </p>
+            {(search || storeFilter !== "ALL") ? (
+              <button className="btn-secondary mt-2" onClick={() => { setSearch(""); setStoreFilter("ALL"); }}>
+                Сбросить фильтры
+              </button>
+            ) : (
+              <button className="btn-primary mt-2" onClick={openCreate} disabled={stores.length === 0}>
+                + Добавить товар
+              </button>
+            )}
+          </div>
+        </div>
       ) : (
         <div className="card overflow-x-auto">
           <table className="table">
@@ -241,24 +262,26 @@ export default function ProductsPage() {
             </tbody>
           </table>
 
-          <div className="flex items-center justify-between p-3 text-sm">
+          <div className="flex items-center justify-between p-3 text-sm text-gray-600">
             <div>
-              Страница {page} из {totalPages}
+              Страница {page} из {totalPages} · {filtered.length} товаров
             </div>
             <div className="flex gap-2">
               <button
                 className="btn-secondary"
                 onClick={() => setPage((p) => Math.max(1, p - 1))}
                 disabled={page === 1}
+                aria-label="Предыдущая страница"
               >
-                ←
+                ← Назад
               </button>
               <button
                 className="btn-secondary"
                 onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
                 disabled={page === totalPages}
+                aria-label="Следующая страница"
               >
-                →
+                Вперёд →
               </button>
             </div>
           </div>

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { AppShell } from "@/components/AppShell";
 import { SeedInitializer } from "@/components/SeedInitializer";
+import { ToastProvider } from "@/components/Toast";
 
 export const metadata: Metadata = {
   title: "Комбайн — юнит-экономика маркетплейсов",
@@ -17,8 +18,10 @@ export default function RootLayout({
   return (
     <html lang="ru">
       <body className="min-h-screen">
-        <SeedInitializer />
-        <AppShell>{children}</AppShell>
+        <ToastProvider>
+          <SeedInitializer />
+          <AppShell>{children}</AppShell>
+        </ToastProvider>
       </body>
     </html>
   );

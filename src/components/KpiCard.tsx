@@ -15,13 +15,15 @@ const toneClass = {
 export function KpiCard({ label, value, hint, tone = "default" }: Props) {
   return (
     <div className="card p-4">
-      <div className="text-xs uppercase tracking-wide text-gray-500">
+      <div className="text-xs font-medium uppercase tracking-wide text-gray-500">
         {label}
       </div>
-      <div className={`mt-1 text-2xl font-semibold ${toneClass[tone]}`}>
+      <div
+        className={`mt-1.5 text-xl sm:text-2xl font-semibold leading-tight break-all ${toneClass[tone]}`}
+      >
         {value}
       </div>
-      {hint && <div className="mt-1 text-xs text-gray-500">{hint}</div>}
+      {hint && <div className="mt-1 text-xs text-gray-400">{hint}</div>}
     </div>
   );
 }

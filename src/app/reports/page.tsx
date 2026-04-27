@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useAppStore } from "@/lib/store";
 import { PageHeader } from "@/components/PageHeader";
 import { Modal } from "@/components/Modal";
+import { useToast } from "@/components/Toast";
 import { parseReportFile } from "@/lib/import";
 import { formatDateTime } from "@/lib/format";
 
@@ -15,6 +16,7 @@ export default function ReportsPage() {
   const removeReport = useAppStore((s) => s.removeReport);
   const addTransactions = useAppStore((s) => s.addTransactions);
 
+  const { success, error: toastError } = useToast();
   const [open, setOpen] = useState(false);
   const [selectedStore, setSelectedStore] = useState(stores[0]?.id ?? "");
   const [busy, setBusy] = useState(false);
@@ -82,10 +84,15 @@ export default function ReportsPage() {
         errors: parsed.errors.length,
         fileName: file.name,
       });
+      success(
+        `Загружено: ${inserted} транзакций` +
+          (skipped > 0 ? `, ${skipped} дублей пропущено` : "") +
+          (parsed.errors.length > 0 ? `, ${parsed.errors.length} ошибок` : ""),
+      );
       setProgress(100);
       setOpen(false);
     } catch (err) {
-      alert("Ошибка обработки файла: " + (err as Error).message);
+      toastError("Ошибка обработки файла: " + (err as Error).message);
     } finally {
       setBusy(false);
       setProgress(0);
@@ -118,8 +125,15 @@ export default function ReportsPage() {
       )}
 
       {reports.length === 0 ? (
-        <div className="card p-8 text-center text-gray-600">
-          Отчётов пока нет.
+        <div className="card">
+          <div className="empty-state">
+            <svg className="w-12 h-12 opacity-20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            <p className="empty-state-title">Отчёты не загружены</p>
+            <p className="empty-state-desc">Загрузите финансовый отчёт из личного кабинета Ozon или Wildberries (Excel / CSV).</p>
+            <button className="btn-primary mt-2" onClick={() => setOpen(true)} disabled={stores.length === 0}>
+              + Загрузить отчёт
+            </button>
+          </div>
         </div>
       ) : (
         <div className="card overflow-x-auto">

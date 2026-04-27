@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useAppStore, planLimits } from "@/lib/store";
 import { PageHeader } from "@/components/PageHeader";
 import { Modal } from "@/components/Modal";
+import { useToast } from "@/components/Toast";
 import type { Platform, Store } from "@/lib/types";
 import { formatDate, formatDateTime } from "@/lib/format";
 import { syncStore } from "@/lib/marketplace";
@@ -17,11 +18,11 @@ export default function AccountsPage() {
   const bulkAddProducts = useAppStore((s) => s.bulkAddProducts);
   const addTransactions = useAppStore((s) => s.addTransactions);
   const products = useAppStore((s) => s.products);
+  const { success, error: toastError } = useToast();
 
   const [openAdd, setOpenAdd] = useState(false);
   const [editingStore, setEditingStore] = useState<Store | null>(null);
   const [syncing, setSyncing] = useState<string | null>(null);
-  const [syncResult, setSyncResult] = useState<Record<string, string>>({});
 
   const limit = planLimits(settings.plan).stores;
   const reachedLimit = stores.length >= limit;
@@ -64,32 +65,20 @@ export default function AccountsPage() {
 
   async function handleSync(store: Store) {
     if (!store.apiKeyEncoded) {
-      setSyncResult((r) => ({
-        ...r,
-        [store.id]: "Нет API-ключа. Отредактируйте магазин и введите ключ заново.",
-      }));
+      toastError("Нет API-ключа. Отредактируйте магазин и введите ключ заново.");
       return;
     }
     setSyncing(store.id);
-    setSyncResult((r) => ({ ...r, [store.id]: "" }));
     try {
       const result = await syncStore(store, products);
-      if (result.products.length > 0) {
-        bulkAddProducts(result.products);
-      }
-      if (result.transactions.length > 0) {
-        addTransactions(result.transactions);
-      }
+      if (result.products.length > 0) bulkAddProducts(result.products);
+      if (result.transactions.length > 0) addTransactions(result.transactions);
       updateStore(store.id, { lastSyncAt: new Date().toISOString() });
-      setSyncResult((r) => ({
-        ...r,
-        [store.id]: `Синхронизировано: ${result.products.length} товаров, ${result.transactions.length} транзакций`,
-      }));
+      success(
+        `${store.name}: ${result.products.length} товаров, ${result.transactions.length} транзакций`,
+      );
     } catch (err) {
-      setSyncResult((r) => ({
-        ...r,
-        [store.id]: `Ошибка: ${(err as Error).message}`,
-      }));
+      toastError(`Ошибка синхронизации: ${(err as Error).message}`);
     } finally {
       setSyncing(null);
     }
@@ -115,8 +104,15 @@ export default function AccountsPage() {
       />
 
       {stores.length === 0 ? (
-        <div className="card p-8 text-center text-gray-600">
-          Магазины ещё не добавлены.
+        <div className="card">
+          <div className="empty-state">
+            <svg className="w-12 h-12 opacity-20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+            <p className="empty-state-title">Магазины не добавлены</p>
+            <p className="empty-state-desc">Добавьте магазин Ozon или Wildberries, чтобы начать расчёт юнит-экономики.</p>
+            <button className="btn-primary mt-2" onClick={() => setOpenAdd(true)}>
+              + Добавить первый магазин
+            </button>
+          </div>
         </div>
       ) : (
         <div className="space-y-3">
@@ -185,18 +181,7 @@ export default function AccountsPage() {
               <div className="mt-3 flex flex-wrap gap-4 text-xs text-gray-500">
                 <span>Создан: {formatDate(s.createdAt)}</span>
                 {s.lastSyncAt && (
-                  <span>Синхр.: {formatDateTime(s.lastSyncAt)}</span>
-                )}
-                {syncResult[s.id] && (
-                  <span
-                    className={
-                      syncResult[s.id].startsWith("Ошибка")
-                        ? "text-rose-700"
-                        : "text-emerald-700"
-                    }
-                  >
-                    {syncResult[s.id]}
-                  </span>
+                  <span>Последняя синхр.: {formatDateTime(s.lastSyncAt)}</span>
                 )}
               </div>
             </div>
