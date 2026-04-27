@@ -1,0 +1,72 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --foreground: #0f172a;
+  --background: #f6f8fb;
+  --card: #ffffff;
+  --border: #e5e7eb;
+  --muted: #6b7280;
+}
+
+html,
+body {
+  background: var(--background);
+  color: var(--foreground);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+@layer components {
+  .card {
+    @apply rounded-xl border border-gray-200 bg-white shadow-sm;
+  }
+  .btn {
+    @apply inline-flex items-center justify-center rounded-lg px-4 py-2 text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500/40 disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .btn-primary {
+    @apply btn bg-brand-600 text-white hover:bg-brand-700;
+  }
+  .btn-secondary {
+    @apply btn bg-white border border-gray-200 text-gray-700 hover:bg-gray-50;
+  }
+  .btn-danger {
+    @apply btn bg-red-600 text-white hover:bg-red-700;
+  }
+  .input {
+    @apply block w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm placeholder:text-gray-400 focus:border-brand-500 focus:ring-2 focus:ring-brand-500/30 focus:outline-none;
+  }
+  .label {
+    @apply block text-sm font-medium text-gray-700 mb-1;
+  }
+  .table {
+    @apply min-w-full divide-y divide-gray-200 text-sm;
+  }
+  .table th {
+    @apply px-3 py-2 text-left font-semibold text-gray-600 bg-gray-50;
+  }
+  .table td {
+    @apply px-3 py-2 text-gray-800;
+  }
+  .badge {
+    @apply inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium;
+  }
+  .badge-success {
+    @apply badge bg-emerald-100 text-emerald-800;
+  }
+  .badge-warning {
+    @apply badge bg-amber-100 text-amber-800;
+  }
+  .badge-danger {
+    @apply badge bg-rose-100 text-rose-800;
+  }
+  .badge-info {
+    @apply badge bg-sky-100 text-sky-800;
+  }
+  .badge-muted {
+    @apply badge bg-gray-100 text-gray-700;
+  }
+}

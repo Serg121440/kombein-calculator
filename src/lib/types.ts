@@ -1,0 +1,127 @@
+export type Platform = "OZON" | "WB";
+
+export type PricingPlan = "FREE" | "PRO" | "ENTERPRISE";
+
+export interface Store {
+  id: string;
+  platform: Platform;
+  name: string;
+  apiKeyMasked: string;
+  clientId?: string;
+  active: boolean;
+  createdAt: string;
+}
+
+export interface Product {
+  id: string;
+  storeId: string;
+  sku: string;
+  name: string;
+  category: string;
+  purchasePrice: number;
+  sellingPrice: number;
+  weightKg: number;
+  lengthCm: number;
+  widthCm: number;
+  heightCm: number;
+  active: boolean;
+  createdAt: string;
+}
+
+export type TariffType =
+  | "COMMISSION"
+  | "LOGISTICS"
+  | "STORAGE"
+  | "LAST_MILE"
+  | "ACQUIRING";
+
+export type TariffSource = "MANUAL" | "FILE" | "API";
+
+export interface Tariff {
+  id: string;
+  storeId: string;
+  platform: Platform;
+  type: TariffType;
+  category: string;
+  /** Percent for COMMISSION/ACQUIRING, RUB for LOGISTICS/LAST_MILE, RUB/L/day for STORAGE */
+  value: number;
+  /** Optional formula description, used when LOGISTICS depends on weight/volume */
+  formula?: string;
+  effectiveFrom: string;
+  effectiveTo?: string;
+  source: TariffSource;
+  createdAt: string;
+}
+
+export type TransactionType =
+  | "SALE"
+  | "COMMISSION"
+  | "LOGISTICS"
+  | "STORAGE"
+  | "PENALTY"
+  | "REFUND"
+  | "SUBSIDY"
+  | "OTHER";
+
+export interface Transaction {
+  id: string;
+  storeId: string;
+  productId?: string;
+  sku?: string;
+  orderId: string;
+  date: string;
+  type: TransactionType;
+  amount: number;
+  description?: string;
+  reportId?: string;
+  rawData?: Record<string, unknown>;
+}
+
+export interface ImportReport {
+  id: string;
+  storeId: string;
+  fileName: string;
+  importedAt: string;
+  rowsTotal: number;
+  rowsImported: number;
+  rowsSkipped: number;
+  rowsErrors: number;
+  errors: string[];
+}
+
+export interface UnitEconomicsPlan {
+  productId: string;
+  revenue: number;
+  commission: number;
+  logistics: number;
+  storage: number;
+  acquiring: number;
+  lastMile: number;
+  costOfGoods: number;
+  grossProfit: number;
+  marginPct: number;
+  roiPct: number;
+}
+
+export interface UnitEconomicsFact {
+  productId: string;
+  revenue: number;
+  commission: number;
+  logistics: number;
+  storage: number;
+  penalties: number;
+  refunds: number;
+  others: number;
+  acquiring: number;
+  costOfGoods: number;
+  grossProfit: number;
+  marginPct: number;
+  roiPct: number;
+  unitsSold: number;
+}
+
+export interface AppSettings {
+  storageDays: number;
+  defaultCurrency: "RUB";
+  plan: PricingPlan;
+}
