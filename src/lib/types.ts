@@ -7,8 +7,11 @@ export interface Store {
   platform: Platform;
   name: string;
   apiKeyMasked: string;
+  /** Base64-obfuscated key; only used server-side via API proxy routes */
+  apiKeyEncoded?: string;
   clientId?: string;
   active: boolean;
+  lastSyncAt?: string;
   createdAt: string;
 }
 
