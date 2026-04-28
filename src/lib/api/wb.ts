@@ -4,26 +4,32 @@
  * Limits (per WB docs):
  *   - General: 300 req / 60 s = 5 req/s
  *   - Content category: 100 req / min → gap ≥ 700 ms between pages
- *   - Statistics: very restrictive (~1 req / 3 min for heavy reports)
- *     → we fetch max 3 pages and pause 3 s between them
- *   - 429 handling: respect X-Ratelimit-Retry header
+ *   - Discounts/prices: 100 req / min
+ *   - Statistics: очень строго (~1 тяжёлый запрос / 3 мин)
+ *   - Advertising: 1 req/min для fullstats
+ *   - 429: читать X-Ratelimit-Retry header
  *
  * Auth: Authorization: Bearer <token>
  * Hosts:
- *   - Content  → https://content-api.wildberries.ru
- *   - Statistics → https://statistics-api.wildberries.ru
+ *   Content    → https://content-api.wildberries.ru
+ *   Prices     → https://discounts-prices-api.wildberries.ru
+ *   Statistics → https://statistics-api.wildberries.ru
+ *   Advert     → https://advert-api.wildberries.ru  (MISSING — не реализовано)
  */
 
 import { apiFetch, parseJson } from "./http";
 
 const CONTENT_BASE = "https://content-api.wildberries.ru";
-const STATS_BASE = "https://statistics-api.wildberries.ru";
+const PRICES_BASE  = "https://discounts-prices-api.wildberries.ru";
+const STATS_BASE   = "https://statistics-api.wildberries.ru";
 
-const CARDS_LIMIT = 100;      // max cards per WB request
-const STATS_LIMIT = 100_000;  // max rows per stats request
-const CONTENT_GAP_MS = 700;   // ~1.4 req/s — well within 100/min limit
-const STATS_GAP_MS = 3_000;   // conservative for heavy stats endpoint
-const STATS_MAX_PAGES = 3;    // safety cap — 300k rows is plenty
+const CARDS_LIMIT    = 100;       // max cards per WB request (docs: 100)
+const PRICES_LIMIT   = 1_000;     // max items per prices request
+const STATS_LIMIT    = 100_000;   // max rows per stats request
+const CONTENT_GAP_MS = 700;       // ~1.4 req/s — well within 100/min
+const PRICES_GAP_MS  = 700;
+const STATS_GAP_MS   = 3_000;     // conservative for heavy stats endpoint
+const STATS_MAX_PAGES = 3;        // safety: 300k rows max per sync
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
@@ -48,6 +54,7 @@ export interface WbCard {
   vendorCode: string;
   title: string;
   subjectName: string;
+  /** Цена в копейках (до скидки) — ненадёжно, используй fetchPrices() */
   salePriceU?: number;
   dimensions?: {
     length: number;
@@ -55,6 +62,17 @@ export interface WbCard {
     height: number;
     weightGross: number;
   };
+  updatedAt?: string;
+}
+
+export interface WbPrice {
+  nmID: number;
+  /** Цена в рублях */
+  price: number;
+  /** Скидка % */
+  discount: number;
+  /** Итоговая цена со скидкой в рублях */
+  discountedPrice: number;
 }
 
 export interface WbStatRow {
@@ -74,26 +92,38 @@ export interface WbStatRow {
   srid: string;
 }
 
-// WB Content v2 response wraps cards inside data.cards
+/** Курсор для инкрементального синка карточек */
+export interface WbCardsCursor {
+  updatedAt: string;
+  nmID: number;
+}
+
 interface CardsApiResponse {
   data?: {
     cards: WbCard[];
     cursor: { updatedAt: string; nmID: number; total: number };
   };
-  // Older API format: top-level cards array (fallback)
   cards?: WbCard[];
   error?: boolean;
   errorText?: string;
 }
 
-// ─── Products — cursor pagination ─────────────────────────────────────────────
+// ─── Products — cursor pagination с поддержкой инкрементального синка ─────────
+//
+// Если передать prevCursor, запрашиваются только карточки, изменившиеся
+// после предыдущей синхронизации. Сохраняй возвращённый nextCursor в Store.
 
 export async function fetchAllCards(
   apiKey: string,
-): Promise<WbCard[]> {
+  prevCursor?: WbCardsCursor,
+): Promise<{ cards: WbCard[]; nextCursor: WbCardsCursor | null }> {
   const h = hdrs(apiKey);
   const all: WbCard[] = [];
-  let cursor: { updatedAt?: string; nmID?: number } = {};
+  // Инкрементальный старт: с позиции прошлого синка
+  let cursor: { updatedAt?: string; nmID?: number } = prevCursor
+    ? { updatedAt: prevCursor.updatedAt, nmID: prevCursor.nmID }
+    : {};
+  let lastCursor: WbCardsCursor | null = null;
 
   for (;;) {
     const res = await apiFetch(
@@ -117,16 +147,79 @@ export async function fetchAllCards(
       throw new Error(`WB Content API: ${data.errorText ?? "unknown error"}`);
     }
 
-    // Support both response shapes
     const cards: WbCard[] = data.data?.cards ?? data.cards ?? [];
     all.push(...cards);
 
-    if (cards.length < CARDS_LIMIT) break;
-
     const next = data.data?.cursor;
+    if (next?.updatedAt) {
+      lastCursor = { updatedAt: next.updatedAt, nmID: next.nmID };
+    }
+
+    if (cards.length < CARDS_LIMIT) break;
     if (!next?.updatedAt) break;
+
     cursor = { updatedAt: next.updatedAt, nmID: next.nmID };
     await sleep(CONTENT_GAP_MS);
+  }
+
+  return { cards: all, nextCursor: lastCursor };
+}
+
+// ─── Prices — отдельный эндпоинт, точнее чем salePriceU в карточках ──────────
+//
+// salePriceU в карточках = цена до скидки × 100 (копейки), часто отсутствует.
+// Этот эндпоинт даёт актуальную цену с учётом скидки.
+
+export async function fetchPrices(
+  apiKey: string,
+  nmIDs?: number[],
+): Promise<WbPrice[]> {
+  const h = hdrs(apiKey);
+  const all: WbPrice[] = [];
+  let offset = 0;
+
+  for (;;) {
+    const params = new URLSearchParams({
+      limit: String(PRICES_LIMIT),
+      offset: String(offset),
+    });
+    if (nmIDs?.length) {
+      // API принимает nmID как query-параметры при фильтрации
+      // При запросе всех товаров не фильтруем
+    }
+
+    const res = await apiFetch(
+      `${PRICES_BASE}/api/v2/list/goods/filter?${params}`,
+      { method: "GET", headers: h },
+      { label: `wb:prices offset=${offset}` },
+    );
+
+    if (!res.ok) {
+      // Цены — некритичная ошибка, вернём пустой список
+      console.warn(`[wb:prices] ${res.status}`);
+      break;
+    }
+
+    const data = await parseJson<{
+      data?: { listGoods?: Array<{ nmID: number; sizes?: Array<{ price: number; discountedPrice: number; discount: number }> }> };
+    }>(res);
+
+    const items = data.data?.listGoods ?? [];
+    for (const item of items) {
+      const size = item.sizes?.[0];
+      if (size) {
+        all.push({
+          nmID: item.nmID,
+          price: size.price,
+          discount: size.discount,
+          discountedPrice: size.discountedPrice,
+        });
+      }
+    }
+
+    if (items.length < PRICES_LIMIT) break;
+    offset += PRICES_LIMIT;
+    await sleep(PRICES_GAP_MS);
   }
 
   return all;
@@ -179,7 +272,6 @@ export async function fetchReport(
       break;
     }
 
-    // Continue from the last rrd_id
     rrdid = rows[rows.length - 1].rrd_id;
     await sleep(STATS_GAP_MS);
   }

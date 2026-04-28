@@ -146,6 +146,9 @@ interface WbCard {
   vendorCode: string;
   title: string;
   subjectName: string;
+  /** Accurate selling price from prices API (roubles) */
+  sellingPrice?: number;
+  /** Fallback: price in kopecks before discount — use sellingPrice if available */
   salePriceU?: number;
   dimensions?: { length: number; width: number; height: number; weightGross: number };
 }
@@ -181,20 +184,23 @@ function classifyWbRow(row: WbRow): TransactionType {
 async function syncWb(
   store: Store,
   existingProducts: Product[],
-): Promise<{ products: Omit<Product, "id" | "createdAt">[]; transactions: Omit<Transaction, "id">[]; warning?: string }> {
+): Promise<{ products: Omit<Product, "id" | "createdAt">[]; transactions: Omit<Transaction, "id">[]; warning?: string; nextWbCursor?: { updatedAt: string; nmID: number } }> {
   const apiKey = decodeKey(store.apiKeyEncoded!);
 
-  // Products
+  // Products — pass previous cursor for incremental sync
   const prodRes = await fetch("/api/wb/products", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ apiKey }),
+    body: JSON.stringify({ apiKey, prevCursor: store.wbCardsCursor }),
   });
   if (!prodRes.ok) {
     const err = await prodRes.json().catch(() => ({ error: prodRes.statusText }));
     throw new Error(err.error ?? "Ошибка получения товаров WB");
   }
-  const prodData = (await prodRes.json()) as { cards: WbCard[] };
+  const prodData = (await prodRes.json()) as {
+    cards: WbCard[];
+    nextCursor?: { updatedAt: string; nmID: number };
+  };
   const existingSkus = new Set(
     existingProducts.filter((p) => p.storeId === store.id).map((p) => p.sku),
   );
@@ -206,7 +212,8 @@ async function syncWb(
       name: c.title ?? `Товар ${c.nmID}`,
       category: c.subjectName ?? "",
       purchasePrice: 0,
-      sellingPrice: c.salePriceU ? c.salePriceU / 100 : 0,
+      // Use accurate price from prices API; fallback to salePriceU kopecks→roubles
+      sellingPrice: c.sellingPrice ?? (c.salePriceU ? c.salePriceU / 100 : 0),
       weightKg: c.dimensions ? c.dimensions.weightGross / 1000 : 0,
       lengthCm: c.dimensions?.length ?? 0,
       widthCm: c.dimensions?.width ?? 0,
@@ -277,7 +284,12 @@ async function syncWb(
     }
   }
 
-  return { products: newProducts, transactions };
+  return {
+    products: newProducts,
+    transactions,
+    warning: txData.warning,
+    nextWbCursor: prodData.nextCursor,
+  };
 }
 
 // ─── Unified sync entry point ─────────────────────────────────────────────────
@@ -289,6 +301,8 @@ export async function syncStore(
   products: Omit<Product, "id" | "createdAt">[];
   transactions: Omit<Transaction, "id">[];
   warning?: string;
+  /** WB only: save to store.wbCardsCursor for next incremental sync */
+  nextWbCursor?: { updatedAt: string; nmID: number };
 }> {
   if (!store.apiKeyEncoded) {
     throw new Error("API-ключ не задан. Отредактируйте магазин.");

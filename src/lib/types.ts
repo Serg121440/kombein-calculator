@@ -12,6 +12,8 @@ export interface Store {
   clientId?: string;
   active: boolean;
   lastSyncAt?: string;
+  /** WB-only: last cursor for incremental card sync { updatedAt, nmID } */
+  wbCardsCursor?: { updatedAt: string; nmID: number };
   createdAt: string;
 }
 
