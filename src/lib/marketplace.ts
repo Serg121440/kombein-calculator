@@ -66,7 +66,7 @@ interface OzonOperation {
 async function syncOzon(
   store: Store,
   existingProducts: Product[],
-): Promise<{ products: Omit<Product, "id" | "createdAt">[]; transactions: Omit<Transaction, "id">[] }> {
+): Promise<{ products: Omit<Product, "id" | "createdAt">[]; transactions: Omit<Transaction, "id">[]; warning?: string }> {
   const apiKey = decodeKey(store.apiKeyEncoded!);
   const clientId = store.clientId!;
 
@@ -181,7 +181,7 @@ function classifyWbRow(row: WbRow): TransactionType {
 async function syncWb(
   store: Store,
   existingProducts: Product[],
-): Promise<{ products: Omit<Product, "id" | "createdAt">[]; transactions: Omit<Transaction, "id">[] }> {
+): Promise<{ products: Omit<Product, "id" | "createdAt">[]; transactions: Omit<Transaction, "id">[]; warning?: string }> {
   const apiKey = decodeKey(store.apiKeyEncoded!);
 
   // Products
@@ -288,6 +288,7 @@ export async function syncStore(
 ): Promise<{
   products: Omit<Product, "id" | "createdAt">[];
   transactions: Omit<Transaction, "id">[];
+  warning?: string;
 }> {
   if (!store.apiKeyEncoded) {
     throw new Error("API-ключ не задан. Отредактируйте магазин.");

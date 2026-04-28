@@ -63,8 +63,11 @@ export type TransactionType =
   | "STORAGE"
   | "PENALTY"
   | "REFUND"
+  | "ADVERTISING"
   | "SUBSIDY"
   | "OTHER";
+
+export type EconomicsModel = "MODEL1" | "MODEL2" | "MODEL3";
 
 export interface Transaction {
   id: string;
@@ -108,10 +111,12 @@ export interface UnitEconomicsPlan {
 
 export interface UnitEconomicsFact {
   productId: string;
+  // Raw period totals
   revenue: number;
   commission: number;
   logistics: number;
   storage: number;
+  advertising: number;
   penalties: number;
   refunds: number;
   others: number;
@@ -120,7 +125,30 @@ export interface UnitEconomicsFact {
   grossProfit: number;
   marginPct: number;
   roiPct: number;
+  // Units
   unitsSold: number;
+  /** SALE count − REFUND count, floored at 0 */
+  unitsRedeemed: number;
+}
+
+/** Per-unit breakdown produced by Model 2 or Model 3 */
+export interface UnitEconomicsPerUnit {
+  model: "MODEL2" | "MODEL3";
+  /** Number of effective units costs were distributed over */
+  unitsBase: number;
+  /** Actual (M2) or input (M3) redemption rate */
+  redemptionRate: number;
+  revenue: number;
+  commission: number;
+  logistics: number;
+  storage: number;
+  advertising: number;
+  acquiring: number;
+  penalties: number;
+  costOfGoods: number;
+  grossProfit: number;
+  marginPct: number;
+  roiPct: number;
 }
 
 export interface AppSettings {

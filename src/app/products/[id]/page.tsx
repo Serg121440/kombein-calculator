@@ -8,6 +8,7 @@ import { PageHeader } from "@/components/PageHeader";
 import { PeriodPicker, buildPeriod, PeriodKey } from "@/components/PeriodPicker";
 import {
   calculateFact,
+  calculateModel2PerUnit,
   calculatePlan,
   comparePlanFact,
   productVolumeLiters,
@@ -43,7 +44,8 @@ export default function ProductPage() {
     storageDays: settings.storageDays,
   });
   const fact = calculateFact(product, transactions, period);
-  const cmp = comparePlanFact(plan, fact);
+  const perUnit = calculateModel2PerUnit(fact, product.purchasePrice);
+  const deltas = perUnit ? comparePlanFact(plan, perUnit) : null;
 
 
   return (
@@ -115,10 +117,14 @@ export default function ProductPage() {
           </div>
           <dl className="mt-2 space-y-1 text-sm">
             <Row label="Продано шт." value={String(fact.unitsSold)} />
+            <Row label="Выкуплено шт." value={String(fact.unitsRedeemed)} />
             <Row label="Выручка" value={formatRub(fact.revenue)} />
             <Row label="Комиссия" value={`− ${formatRub(fact.commission)}`} />
             <Row label="Логистика" value={`− ${formatRub(fact.logistics)}`} />
             <Row label="Хранение" value={`− ${formatRub(fact.storage)}`} />
+            {fact.advertising > 0 && (
+              <Row label="Реклама" value={`− ${formatRub(fact.advertising)}`} />
+            )}
             <Row label="Штрафы" value={`− ${formatRub(fact.penalties)}`} />
             <Row label="Возвраты" value={`− ${formatRub(fact.refunds)}`} />
             <Row label="Прочие" value={`− ${formatRub(fact.others)}`} />
@@ -139,16 +145,20 @@ export default function ProductPage() {
         </div>
       </div>
 
-      {cmp.deltas && cmp.factPerUnit && (
+      {perUnit && deltas && (
         <div className="card p-4">
-          <div className="font-semibold mb-3">Сравнение план / факт (на 1 шт)</div>
+          <div className="font-semibold mb-1">Сравнение план / факт (на 1 шт)</div>
+          <div className="text-xs text-gray-400 mb-3">
+            Модель 2 · база {perUnit.unitsBase} выкупленных шт. · выкуп{" "}
+            {formatPct(perUnit.redemptionRate * 100)}
+          </div>
           <div className="overflow-x-auto">
             <table className="table">
               <thead>
                 <tr>
                   <th>Метрика</th>
                   <th className="text-right">План</th>
-                  <th className="text-right">Факт</th>
+                  <th className="text-right">Факт / шт</th>
                   <th className="text-right">Δ</th>
                 </tr>
               </thead>
@@ -156,62 +166,54 @@ export default function ProductPage() {
                 <CompareRow
                   label="Выручка"
                   plan={plan.revenue}
-                  fact={cmp.factPerUnit.revenue}
-                  delta={cmp.deltas.revenue}
+                  fact={perUnit.revenue}
+                  delta={deltas.revenue}
                   deltaTone="positiveGood"
                 />
                 <CompareRow
                   label="Комиссия"
                   plan={plan.commission}
-                  fact={cmp.factPerUnit.commission}
-                  delta={cmp.deltas.commission}
+                  fact={perUnit.commission}
+                  delta={deltas.commission}
                   deltaTone="positiveBad"
                 />
                 <CompareRow
                   label="Логистика"
                   plan={plan.logistics}
-                  fact={cmp.factPerUnit.logistics}
-                  delta={cmp.deltas.logistics}
+                  fact={perUnit.logistics}
+                  delta={deltas.logistics}
                   deltaTone="positiveBad"
                 />
                 <CompareRow
                   label="Хранение"
                   plan={plan.storage}
-                  fact={cmp.factPerUnit.storage}
-                  delta={cmp.deltas.storage}
+                  fact={perUnit.storage}
+                  delta={deltas.storage}
                   deltaTone="positiveBad"
                 />
                 <CompareRow
                   label="Прибыль"
                   plan={plan.grossProfit}
-                  fact={cmp.factPerUnit.grossProfit}
-                  delta={cmp.deltas.grossProfit}
+                  fact={perUnit.grossProfit}
+                  delta={deltas.grossProfit}
                   deltaTone="positiveGood"
                 />
                 <tr>
                   <td>Маржа %</td>
                   <td className="text-right">{formatPct(plan.marginPct)}</td>
-                  <td className="text-right">{formatPct(fact.marginPct)}</td>
-                  <td
-                    className={
-                      "text-right " + deltaClass(cmp.deltas.marginPct)
-                    }
-                  >
-                    {cmp.deltas.marginPct > 0 ? "+" : ""}
-                    {cmp.deltas.marginPct.toFixed(1)} п.п.
+                  <td className="text-right">{formatPct(perUnit.marginPct)}</td>
+                  <td className={"text-right " + deltaClass(deltas.marginPct)}>
+                    {deltas.marginPct > 0 ? "+" : ""}
+                    {deltas.marginPct.toFixed(1)} п.п.
                   </td>
                 </tr>
                 <tr>
                   <td>ROI %</td>
                   <td className="text-right">{formatPct(plan.roiPct)}</td>
-                  <td className="text-right">{formatPct(fact.roiPct)}</td>
-                  <td
-                    className={
-                      "text-right " + deltaClass(cmp.deltas.roiPct)
-                    }
-                  >
-                    {cmp.deltas.roiPct > 0 ? "+" : ""}
-                    {cmp.deltas.roiPct.toFixed(1)} п.п.
+                  <td className="text-right">{formatPct(perUnit.roiPct)}</td>
+                  <td className={"text-right " + deltaClass(deltas.roiPct)}>
+                    {deltas.roiPct > 0 ? "+" : ""}
+                    {deltas.roiPct.toFixed(1)} п.п.
                   </td>
                 </tr>
               </tbody>
