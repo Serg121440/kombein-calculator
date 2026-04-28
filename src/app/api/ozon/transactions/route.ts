@@ -3,6 +3,16 @@ import { fetchTransactions } from "@/lib/api/ozon";
 
 export const maxDuration = 60;
 
+function ozonHint(msg: string): string {
+  if (msg.includes("[401]"))
+    return " Проверьте API-ключ Ozon.";
+  if (msg.includes("[403]"))
+    return " API-ключ не имеет доступа к финансовым данным. Включите разрешение «Финансы» в настройках ключа.";
+  if (msg.includes("[404]"))
+    return " Проверьте Client-ID (числовой ID продавца в Настройки → API ключи).";
+  return "";
+}
+
 export async function POST(req: NextRequest) {
   try {
     const { apiKey, clientId, fromDate, toDate } = (await req.json()) as {
@@ -14,7 +24,7 @@ export async function POST(req: NextRequest) {
 
     if (!apiKey || !clientId) {
       return NextResponse.json(
-        { error: "apiKey and clientId are required" },
+        { error: "apiKey и clientId обязательны" },
         { status: 400 },
       );
     }
@@ -28,7 +38,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(result);
   } catch (err) {
     const msg = (err as Error).message;
+    const hint = ozonHint(msg);
     console.error("[ozon/transactions]", msg);
-    return NextResponse.json({ operations: [], warning: msg });
+    return NextResponse.json({ operations: [], warning: msg + hint });
   }
 }
