@@ -1,0 +1,8 @@
+{
+  "functions": {
+    "src/app/api/ozon/products/route.ts": { "maxDuration": 60 },
+    "src/app/api/ozon/transactions/route.ts": { "maxDuration": 60 },
+    "src/app/api/wb/products/route.ts": { "maxDuration": 60 },
+    "src/app/api/wb/transactions/route.ts": { "maxDuration": 60 }
+  }
+}
