@@ -153,16 +153,38 @@ function detectFormat(
 ): { format: DetectedFormat; platform: Platform } {
   const lower = fileName.toLowerCase();
   const hset = new Set(headers.map(normKey));
-  if (hset.has("ozon") || lower.includes("ozon")) {
-    if (lower.includes("payout") || lower.includes("выплат"))
-      return { format: "OZON_PAYOUTS", platform: "OZON" };
-    return { format: "OZON_REALIZATION", platform: "OZON" };
-  }
-  if (lower.includes("wb") || lower.includes("wildberries")) {
+
+  // WB-specific column names in the actual downloaded Excel
+  const isWb =
+    lower.includes("wb") ||
+    lower.includes("wildberries") ||
+    hset.has("ppvzforpay") ||
+    hset.has("supplieropername") ||
+    hset.has("saname") ||
+    hset.has("артикулпродавца") ||
+    hset.has("обоснованиедляоплаты") ||
+    hset.has("кперечислениюпродавцу");
+
+  if (isWb) {
     if (lower.includes("finance") || lower.includes("финанс"))
       return { format: "WB_FINANCE", platform: "WB" };
     return { format: "WB_SALES", platform: "WB" };
   }
+
+  // Ozon-specific column names
+  const isOzon =
+    lower.includes("ozon") ||
+    hset.has("ozon") ||
+    hset.has("номеротправления") ||
+    hset.has("типоперации") ||
+    hset.has("датаоперации");
+
+  if (isOzon) {
+    if (lower.includes("payout") || lower.includes("выплат"))
+      return { format: "OZON_PAYOUTS", platform: "OZON" };
+    return { format: "OZON_REALIZATION", platform: "OZON" };
+  }
+
   return { format: "GENERIC", platform: "OZON" };
 }
 
@@ -214,55 +236,62 @@ export async function parseReportFile(
   const errors: string[] = [];
   const headers = json[0] ? Object.keys(json[0]) : [];
   const detection = detectFormat(headers, file.name);
+
+  if (detection.platform === "WB") {
+    return parseWbReport(json, storeId, errors, detection);
+  }
+  return parseOzonReport(json, storeId, errors, detection);
+}
+
+function parseOzonReport(
+  json: Record<string, unknown>[],
+  storeId: string,
+  errors: string[],
+  detection: { format: DetectedFormat; platform: Platform },
+): { transactions: Omit<Transaction, "id">[]; errors: string[]; format: DetectedFormat; platform: Platform } {
   const transactions: Omit<Transaction, "id">[] = [];
 
   json.forEach((row, i) => {
     const lineNo = i + 2;
     const orderId = String(
       pick(row, [
-        "order_id",
-        "номерзаказа",
-        "ordernumber",
-        "номерпоставки",
-        "srid",
+        "order_id", "номер заказа", "ordernumber",
+        "номер отправления", "posting_number", "postingnumber",
+        "номер поставки", "srid",
       ]) ?? "",
     ).trim();
     const sku = String(
-      pick(row, ["sku", "артикул", "barcode", "штрихкод", "nm_id", "nmid"]) ??
-        "",
+      pick(row, [
+        "sku", "артикул", "offer_id", "offerid",
+        "barcode", "штрихкод", "nm_id", "nmid",
+      ]) ?? "",
     ).trim();
     const dateRaw = pick(row, [
-      "date",
-      "дата",
-      "date_from",
-      "rr_dt",
-      "дата операции",
+      "date", "дата", "дата операции", "date_from", "rr_dt",
+      "sale_dt", "saledt", "order_dt", "orderdt",
     ]);
     const amount = parseNumber(
       pick(row, [
-        "amount",
-        "сумма",
-        "к перечислению",
-        "ppvz_for_pay",
-        "выплата",
+        "amount", "сумма", "сумма начисления", "итого",
+        "ppvz_for_pay", "ppvzforpay", "выплата",
+        "к перечислению", "к перечислению продавцу",
       ]),
     );
     const typeRaw = String(
       pick(row, [
-        "type",
-        "тип",
-        "operation",
-        "doc_type_name",
-        "supplier_oper_name",
-        "тип операции",
+        "type", "тип", "тип операции", "operation",
+        "doc_type_name", "supplier_oper_name",
+        "обоснование для оплаты", "тип документа",
       ]) ?? "",
     );
     const description = String(
-      pick(row, ["description", "описание", "name", "наименование"]) ?? "",
+      pick(row, [
+        "description", "описание", "наименование", "наименование товара", "name",
+      ]) ?? "",
     );
 
     if (!orderId && !sku) {
-      errors.push(`Строка ${lineNo}: отсутствует order_id и SKU — пропуск`);
+      errors.push(`Строка ${lineNo}: нет order_id и SKU — пропуск`);
       return;
     }
 
@@ -279,10 +308,124 @@ export async function parseReportFile(
     });
   });
 
-  return {
-    transactions,
-    errors,
-    format: detection.format,
-    platform: detection.platform,
-  };
+  return { transactions, errors, format: detection.format, platform: detection.platform };
+}
+
+function parseWbReport(
+  json: Record<string, unknown>[],
+  storeId: string,
+  errors: string[],
+  detection: { format: DetectedFormat; platform: Platform },
+): { transactions: Omit<Transaction, "id">[]; errors: string[]; format: DetectedFormat; platform: Platform } {
+  const transactions: Omit<Transaction, "id">[] = [];
+
+  json.forEach((row, i) => {
+    const lineNo = i + 2;
+
+    // WB SKU: "Артикул продавца" (sa_name) preferred over numeric nmID
+    const sku = String(
+      pick(row, [
+        "sa_name", "saname", "артикул продавца", "vendor_code", "vendorcode",
+        "артикул", "nm_id", "nmid", "артикул wb",
+      ]) ?? "",
+    ).trim();
+
+    const srid = String(pick(row, ["srid"]) ?? "").trim();
+    const rrdId = String(pick(row, ["rrd_id", "rrdid"]) ?? "").trim();
+    const orderId = srid || rrdId;
+
+    if (!orderId && !sku) {
+      errors.push(`Строка ${lineNo}: нет srid/rrd_id и SKU — пропуск`);
+      return;
+    }
+
+    const dateRaw = pick(row, [
+      "sale_dt", "saledt", "дата продажи",
+      "order_dt", "orderdt", "дата заказа",
+      "date", "дата",
+    ]);
+    const date = parseDate(dateRaw);
+
+    const typeRaw = String(
+      pick(row, [
+        "supplier_oper_name", "supplieropername", "обоснование для оплаты",
+        "doc_type_name", "doctypename", "тип документа",
+        "тип", "type",
+      ]) ?? "",
+    );
+    const description = typeRaw || String(
+      pick(row, ["наименование", "name"]) ?? "",
+    );
+
+    const base = { storeId, sku: sku || undefined, date, source: "upload" as const };
+
+    // Main payout amount (ppvz_for_pay / К перечислению продавцу)
+    const pay = parseNumber(pick(row, [
+      "ppvz_for_pay", "ppvzforpay",
+      "к перечислению продавцу", "к перечислению продавцу (руб.)",
+      "к перечислению", "выплата", "amount", "сумма",
+    ]));
+    if (pay !== 0) {
+      transactions.push({
+        ...base,
+        orderId: orderId || `ROW-${lineNo}`,
+        externalId: srid ? `wb-${srid}` : undefined,
+        type: classifyType(typeRaw, pay),
+        amount: pay,
+        description,
+        rawData: row,
+      });
+    }
+
+    // Delivery fee (отдельная транзакция)
+    const delivery = parseNumber(pick(row, [
+      "delivery_rub", "deliveryrub",
+      "услуги по доставке", "доставка",
+    ]));
+    if (delivery > 0) {
+      transactions.push({
+        ...base,
+        orderId: (orderId || `ROW-${lineNo}`) + "-log",
+        externalId: srid ? `wb-${srid}-log` : undefined,
+        type: "LOGISTICS",
+        amount: -delivery,
+        description: "Логистика WB",
+      });
+    }
+
+    // Storage fee
+    const storage = parseNumber(pick(row, [
+      "storage_fee", "storagefee", "хранение",
+    ]));
+    if (storage > 0) {
+      transactions.push({
+        ...base,
+        orderId: (orderId || `ROW-${lineNo}`) + "-stor",
+        externalId: srid ? `wb-${srid}-stor` : undefined,
+        type: "STORAGE",
+        amount: -storage,
+        description: "Хранение WB",
+      });
+    }
+
+    // Penalty
+    const penalty = parseNumber(pick(row, ["penalty", "штрафы", "штраф"]));
+    if (penalty > 0) {
+      transactions.push({
+        ...base,
+        orderId: (orderId || `ROW-${lineNo}`) + "-pen",
+        externalId: srid ? `wb-${srid}-pen` : undefined,
+        type: "PENALTY",
+        amount: -penalty,
+        description: "Штраф WB",
+      });
+    }
+
+    // If nothing was added (all zero), still add the row if there's a pay amount
+    if (pay === 0 && delivery === 0 && storage === 0 && penalty === 0) {
+      errors.push(`Строка ${lineNo}: все суммы равны нулю — пропуск`);
+    }
+  });
+
+  return { transactions, errors, format: detection.format, platform: detection.platform };
 }

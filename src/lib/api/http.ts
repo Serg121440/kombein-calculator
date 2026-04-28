@@ -92,11 +92,24 @@ export async function apiFetch(
 export async function parseJson<T>(res: Response): Promise<T> {
   const text = await res.text();
   if (!res.ok) {
-    throw new Error(`HTTP ${res.status}: ${text.slice(0, 400)}`);
+    // Try to extract a human-readable message from JSON error bodies
+    try {
+      const body = JSON.parse(text) as Record<string, unknown>;
+      const msg =
+        (body.message as string) ??
+        (body.error as string) ??
+        (body.errorText as string) ??
+        (body.detail as string) ??
+        text.slice(0, 300);
+      throw new Error(`[${res.status}] ${msg}`);
+    } catch (e) {
+      if ((e as Error).message.startsWith("[")) throw e;
+      throw new Error(`[${res.status}] ${text.slice(0, 300)}`);
+    }
   }
   try {
     return JSON.parse(text) as T;
   } catch {
-    throw new Error(`Non-JSON response (${res.status}): ${text.slice(0, 400)}`);
+    throw new Error(`Некорректный JSON от сервера (${res.status}): ${text.slice(0, 200)}`);
   }
 }
