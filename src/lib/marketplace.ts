@@ -133,6 +133,8 @@ async function syncOzon(
       amount: op.amount,
       description: op.operation_type,
       rawData: op as unknown as Record<string, unknown>,
+      source: "api",
+      externalId: String(op.operation_id),
     };
   });
 
@@ -235,14 +237,16 @@ async function syncWb(
   for (const row of txData.rows ?? []) {
     const sku = String(row.sa_name ?? "");
     const date = row.sale_dt ?? row.order_dt ?? new Date().toISOString();
-    const orderId = String(row.srid ?? row.rrd_id);
+    // srid is WB's stable external ID for the sale record; rrd_id is the report row ID
+    const srid = row.srid ? String(row.srid) : undefined;
+    const orderId = srid ?? String(row.rrd_id);
+    const base = { storeId: store.id, sku: sku || undefined, date, source: "api" as const };
 
     if (row.ppvz_for_pay !== 0) {
       transactions.push({
-        storeId: store.id,
-        sku: sku || undefined,
+        ...base,
         orderId,
-        date,
+        externalId: srid ?? `wb-${row.rrd_id}`,
         type: classifyWbRow(row),
         amount: row.ppvz_for_pay,
         description: row.supplier_oper_name,
@@ -251,10 +255,9 @@ async function syncWb(
     }
     if (row.delivery_rub > 0) {
       transactions.push({
-        storeId: store.id,
-        sku: sku || undefined,
+        ...base,
         orderId: orderId + "-log",
-        date,
+        externalId: srid ? `${srid}-log` : `wb-${row.rrd_id}-log`,
         type: "LOGISTICS",
         amount: -row.delivery_rub,
         description: "Логистика WB",
@@ -262,10 +265,9 @@ async function syncWb(
     }
     if (row.storage_fee > 0) {
       transactions.push({
-        storeId: store.id,
-        sku: sku || undefined,
+        ...base,
         orderId: orderId + "-stor",
-        date,
+        externalId: srid ? `${srid}-stor` : `wb-${row.rrd_id}-stor`,
         type: "STORAGE",
         amount: -row.storage_fee,
         description: "Хранение WB",
@@ -273,10 +275,9 @@ async function syncWb(
     }
     if (row.penalty > 0) {
       transactions.push({
-        storeId: store.id,
-        sku: sku || undefined,
+        ...base,
         orderId: orderId + "-pen",
-        date,
+        externalId: srid ? `${srid}-pen` : `wb-${row.rrd_id}-pen`,
         type: "PENALTY",
         amount: -row.penalty,
         description: "Штраф WB",

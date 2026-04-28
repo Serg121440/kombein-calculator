@@ -11,6 +11,7 @@ import type {
   Tariff,
   Transaction,
 } from "./types";
+import { computeFingerprint, legacyKey, sourcePriority } from "./fingerprint";
 
 interface State {
   hasHydrated: boolean;
@@ -42,6 +43,7 @@ interface State {
   addTransactions: (txs: Omit<Transaction, "id">[]) => {
     inserted: number;
     skipped: number;
+    updated: number;
   };
   removeTransactionsByReport: (reportId: string) => void;
 
@@ -152,24 +154,59 @@ export const useAppStore = create<State>()(
 
       addTransactions: (txs) => {
         const existing = get().transactions;
-        const seen = new Set(
-          existing.map(
-            (t) => `${t.orderId}|${t.date}|${t.amount}|${t.type}|${t.sku ?? ""}`,
-          ),
-        );
-        const fresh: Transaction[] = [];
-        let skipped = 0;
-        for (const tx of txs) {
-          const key = `${tx.orderId}|${tx.date}|${tx.amount}|${tx.type}|${tx.sku ?? ""}`;
-          if (seen.has(key)) {
-            skipped++;
-            continue;
-          }
-          seen.add(key);
-          fresh.push({ ...tx, id: uuid() });
+
+        // Build lookup maps from existing transactions (support both legacy and new fingerprints)
+        const fpMap = new Map<string, Transaction>();
+        const legacyMap = new Map<string, Transaction>();
+        for (const t of existing) {
+          if (t.fingerprint) fpMap.set(t.fingerprint, t);
+          legacyMap.set(legacyKey(t), t);
         }
-        set({ transactions: [...existing, ...fresh] });
-        return { inserted: fresh.length, skipped };
+
+        const toAdd: Transaction[] = [];
+        const toReplace = new Map<string, Transaction>(); // id → replacement
+        let skipped = 0;
+        let updated = 0;
+
+        for (const tx of txs) {
+          const fp = tx.fingerprint ?? computeFingerprint(tx);
+          const lk = legacyKey(tx);
+
+          // Find existing match — fingerprint first, then legacy key
+          const existingTx = fpMap.get(fp) ?? legacyMap.get(lk);
+
+          if (!existingTx) {
+            const newTx: Transaction = { ...tx, fingerprint: fp, id: uuid() };
+            toAdd.push(newTx);
+            fpMap.set(fp, newTx);
+            legacyMap.set(lk, newTx);
+          } else {
+            const inPriority = sourcePriority(tx.source);
+            const exPriority = sourcePriority(existingTx.source);
+
+            if (inPriority < exPriority) {
+              // Higher-priority source (API) replaces lower-priority (upload)
+              toReplace.set(existingTx.id, {
+                ...tx,
+                fingerprint: fp,
+                id: existingTx.id,           // keep ID for referential integrity
+                reportId: existingTx.reportId, // preserve report link
+              });
+              updated++;
+            } else {
+              skipped++;
+            }
+          }
+        }
+
+        set({
+          transactions: [
+            ...existing.map((t) => toReplace.get(t.id) ?? t),
+            ...toAdd,
+          ],
+        });
+
+        return { inserted: toAdd.length, skipped, updated };
       },
       removeTransactionsByReport: (reportId) =>
         set({

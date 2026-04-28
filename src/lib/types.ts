@@ -58,6 +58,8 @@ export interface Tariff {
   createdAt: string;
 }
 
+export type DataSource = "api" | "upload" | "manual";
+
 export type TransactionType =
   | "SALE"
   | "COMMISSION"
@@ -83,6 +85,12 @@ export interface Transaction {
   description?: string;
   reportId?: string;
   rawData?: Record<string, unknown>;
+  /** Data origin — drives conflict resolution priority */
+  source?: DataSource;
+  /** Marketplace-assigned ID: Ozon operation_id, WB srid/rrd_id */
+  externalId?: string;
+  /** Dedup fingerprint — "ext|..." or "cnt|..." */
+  fingerprint?: string;
 }
 
 export interface ImportReport {

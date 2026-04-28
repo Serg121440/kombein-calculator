@@ -275,6 +275,7 @@ export async function parseReportFile(
       amount,
       description,
       rawData: row,
+      source: "upload",
     });
   });
 
