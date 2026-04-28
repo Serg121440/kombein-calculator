@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchAllCards, fetchPrices, type WbCardsCursor } from "@/lib/api/wb";
 
+export const maxDuration = 60;
+
 export async function POST(req: NextRequest) {
   try {
     const { apiKey, prevCursor } = (await req.json()) as {

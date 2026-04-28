@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchTransactions } from "@/lib/api/ozon";
 
+export const maxDuration = 60;
+
 export async function POST(req: NextRequest) {
   try {
     const { apiKey, clientId, fromDate, toDate } = (await req.json()) as {
