@@ -248,10 +248,17 @@ export async function fetchAllProducts(
 
   const productIds = listItems.map((i) => i.product_id);
 
-  // Info and prices can be fetched in parallel (different endpoints)
+  // Info and prices can be fetched in parallel (different endpoints).
+  // Both are best-effort — a 404 or permissions error must not abort the sync.
   const [infoItems, priceItems] = await Promise.all([
-    fetchProductInfo(apiKey, clientId, productIds),
-    fetchProductPrices(apiKey, clientId, productIds),
+    fetchProductInfo(apiKey, clientId, productIds).catch((e: Error) => {
+      console.warn("[ozon] product/info/list failed (non-fatal):", e.message);
+      return [] as InfoItem[];
+    }),
+    fetchProductPrices(apiKey, clientId, productIds).catch((e: Error) => {
+      console.warn("[ozon] product/info/prices failed (non-fatal):", e.message);
+      return [] as PriceItem[];
+    }),
   ]);
 
   const infoMap = new Map(infoItems.map((i) => [i.id, i]));
