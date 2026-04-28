@@ -50,7 +50,9 @@ export default function DashboardPage() {
         acc.commission += t.commission;
         acc.logistics += t.logistics;
         acc.storage += t.storage;
+        acc.advertising += t.advertising;
         acc.units += t.unitsSold;
+        acc.unitsRedeemed += t.unitsRedeemed;
         return acc;
       },
       {
@@ -59,7 +61,9 @@ export default function DashboardPage() {
         commission: 0,
         logistics: 0,
         storage: 0,
+        advertising: 0,
         units: 0,
+        unitsRedeemed: 0,
       },
     );
   }, [targetStores, products, transactions, period]);
@@ -221,7 +225,7 @@ export default function DashboardPage() {
         }
       />
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 mb-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-3">
         <KpiCard label="Выручка" value={formatRub(totals.revenue)} />
         <KpiCard
           label="Прибыль"
@@ -234,10 +238,22 @@ export default function DashboardPage() {
           tone={margin >= 15 ? "good" : margin >= 0 ? "warn" : "bad"}
         />
         <KpiCard label="Активных товаров" value={String(activeProducts)} />
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
+        <KpiCard label="Реклама" value={formatRub(totals.advertising)} tone={totals.advertising > 0 ? "warn" : "default"} />
+        <KpiCard
+          label="Продано / Выкуплено"
+          value={`${totals.units} / ${totals.unitsRedeemed}`}
+          tone={totals.units > 0 && totals.unitsRedeemed / totals.units < 0.5 ? "warn" : "default"}
+        />
         <KpiCard
           label="Отрицательная маржа"
           value={String(negativeMargin)}
           tone={negativeMargin > 0 ? "bad" : "good"}
+        />
+        <KpiCard
+          label="Логистика + Хранение"
+          value={formatRub(totals.logistics + totals.storage)}
         />
       </div>
 

@@ -18,7 +18,7 @@ export default function AccountsPage() {
   const bulkAddProducts = useAppStore((s) => s.bulkAddProducts);
   const addTransactions = useAppStore((s) => s.addTransactions);
   const products = useAppStore((s) => s.products);
-  const { success, error: toastError } = useToast();
+  const { success, error: toastError, warn } = useToast();
 
   const [openAdd, setOpenAdd] = useState(false);
   const [editingStore, setEditingStore] = useState<Store | null>(null);
@@ -71,12 +71,20 @@ export default function AccountsPage() {
     setSyncing(store.id);
     try {
       const result = await syncStore(store, products);
+      let txResult = { inserted: 0, skipped: 0, updated: 0 };
       if (result.products.length > 0) bulkAddProducts(result.products);
-      if (result.transactions.length > 0) addTransactions(result.transactions);
-      updateStore(store.id, { lastSyncAt: new Date().toISOString() });
-      success(
-        `${store.name}: ${result.products.length} товаров, ${result.transactions.length} транзакций`,
-      );
+      if (result.transactions.length > 0) txResult = addTransactions(result.transactions);
+      updateStore(store.id, {
+        lastSyncAt: new Date().toISOString(),
+        ...(result.nextWbCursor ? { wbCardsCursor: result.nextWbCursor } : {}),
+      });
+      const parts: string[] = [];
+      if (result.products.length > 0) parts.push(`${result.products.length} товаров`);
+      if (txResult.inserted > 0) parts.push(`${txResult.inserted} новых`);
+      if (txResult.updated > 0) parts.push(`${txResult.updated} обновлено`);
+      if (txResult.skipped > 0) parts.push(`${txResult.skipped} дублей`);
+      success(`${store.name}: ${parts.join(" · ") || "нет изменений"}`);
+      if (result.warning) warn(result.warning);
     } catch (err) {
       toastError(`Ошибка синхронизации: ${(err as Error).message}`);
     } finally {

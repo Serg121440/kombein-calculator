@@ -100,6 +100,7 @@ export interface ImportReport {
   importedAt: string;
   rowsTotal: number;
   rowsImported: number;
+  rowsUpdated: number;
   rowsSkipped: number;
   rowsErrors: number;
   errors: string[];

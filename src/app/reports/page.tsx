@@ -23,6 +23,7 @@ export default function ReportsPage() {
   const [progress, setProgress] = useState(0);
   const [lastResult, setLastResult] = useState<null | {
     inserted: number;
+    updated: number;
     skipped: number;
     errors: number;
     fileName: string;
@@ -54,13 +55,14 @@ export default function ReportsPage() {
       });
 
       setProgress(80);
-      const { inserted, skipped } = addTransactions(enriched);
+      const { inserted, skipped, updated } = addTransactions(enriched);
       const report = addReport({
         storeId: selectedStore,
         fileName: file.name,
         importedAt: new Date().toISOString(),
         rowsTotal: parsed.transactions.length,
         rowsImported: inserted,
+        rowsUpdated: updated,
         rowsSkipped: skipped,
         rowsErrors: parsed.errors.length,
         errors: parsed.errors,
@@ -80,13 +82,15 @@ export default function ReportsPage() {
 
       setLastResult({
         inserted,
+        updated,
         skipped,
         errors: parsed.errors.length,
         fileName: file.name,
       });
       success(
-        `Загружено: ${inserted} транзакций` +
-          (skipped > 0 ? `, ${skipped} дублей пропущено` : "") +
+        `Загружено: ${inserted} новых` +
+          (updated > 0 ? `, ${updated} обновлено` : "") +
+          (skipped > 0 ? `, ${skipped} дублей` : "") +
           (parsed.errors.length > 0 ? `, ${parsed.errors.length} ошибок` : ""),
       );
       setProgress(100);
@@ -119,8 +123,10 @@ export default function ReportsPage() {
       {lastResult && (
         <div className="card p-4 mb-4 border-emerald-200 bg-emerald-50 text-emerald-800 text-sm">
           Загружен файл <b>{lastResult.fileName}</b>:{" "}
-          {lastResult.inserted} добавлено · {lastResult.skipped} дублей ·{" "}
-          {lastResult.errors} ошибок.
+          {lastResult.inserted} добавлено
+          {lastResult.updated > 0 && ` · ${lastResult.updated} обновлено`}
+          {lastResult.skipped > 0 && ` · ${lastResult.skipped} дублей`}
+          {lastResult.errors > 0 && ` · ${lastResult.errors} ошибок`}.
         </div>
       )}
 
@@ -144,7 +150,8 @@ export default function ReportsPage() {
                 <th>Магазин</th>
                 <th>Дата загрузки</th>
                 <th className="text-right">Всего</th>
-                <th className="text-right">Импортировано</th>
+                <th className="text-right">Новых</th>
+                <th className="text-right">Обновлено</th>
                 <th className="text-right">Дубли</th>
                 <th className="text-right">Ошибки</th>
                 <th className="text-right">Действия</th>
@@ -164,6 +171,9 @@ export default function ReportsPage() {
                       <td className="text-right">{r.rowsTotal}</td>
                       <td className="text-right text-emerald-700">
                         {r.rowsImported}
+                      </td>
+                      <td className="text-right text-sky-700">
+                        {r.rowsUpdated ?? 0}
                       </td>
                       <td className="text-right">{r.rowsSkipped}</td>
                       <td className="text-right text-rose-700">
