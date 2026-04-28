@@ -149,11 +149,18 @@ export default function AccountsPage() {
                   ) : (
                     <span className="badge-muted">Отключён</span>
                   )}
+                  {!s.apiKeyEncoded && (
+                    <span className="badge-warning text-xs">Нет ключа</span>
+                  )}
                   <button
                     className="btn-primary text-xs px-3 py-1.5"
                     onClick={() => handleSync(s)}
-                    disabled={syncing === s.id || !s.active}
-                    title={!s.active ? "Магазин отключён" : ""}
+                    disabled={syncing === s.id || !s.active || !s.apiKeyEncoded}
+                    title={
+                      !s.active ? "Магазин отключён" :
+                      !s.apiKeyEncoded ? "Введите API-ключ через «Изменить»" :
+                      "Загрузить товары и транзакции с маркетплейса"
+                    }
                   >
                     {syncing === s.id ? "Синхронизация…" : "Синхронизировать"}
                   </button>
@@ -192,6 +199,11 @@ export default function AccountsPage() {
                   <span>Последняя синхр.: {formatDateTime(s.lastSyncAt)}</span>
                 )}
               </div>
+              {!s.apiKeyEncoded && (
+                <div className="mt-2 text-xs text-amber-700 bg-amber-50 rounded px-3 py-1.5">
+                  Это демо-магазин. Нажмите «Изменить» и введите реальный API-ключ маркетплейса, чтобы включить синхронизацию.
+                </div>
+              )}
             </div>
           ))}
         </div>
