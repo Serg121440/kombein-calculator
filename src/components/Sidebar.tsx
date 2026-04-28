@@ -61,6 +61,17 @@ const NAV = [
     ),
   },
   {
+    href: "/economics",
+    label: "Юнит-экономика",
+    icon: (
+      <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <rect x="2" y="3" width="20" height="14" rx="2" />
+        <path d="M8 21h8M12 17v4" />
+        <path d="M7 8h2l2 5 2-7 2 4h2" />
+      </svg>
+    ),
+  },
+  {
     href: "/analytics",
     label: "Аналитика",
     icon: (
