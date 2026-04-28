@@ -100,17 +100,16 @@ async function syncOzon(
       active: true,
     }));
 
-  // Sync transactions (last 30 days)
+  // Sync transactions (last 30 days) — non-fatal: 404/403 returns empty list
   const txRes = await fetch("/api/ozon/transactions", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ apiKey, clientId }),
   });
-  if (!txRes.ok) {
-    const err = await txRes.json().catch(() => ({ error: txRes.statusText }));
-    throw new Error(err.error ?? "Ошибка получения транзакций Ozon");
-  }
-  const txData = (await txRes.json()) as { operations: OzonOperation[] };
+  const txData = (await txRes.json().catch(() => ({}))) as {
+    operations?: OzonOperation[];
+    warning?: string;
+  };
   const skuMap = new Map(
     existingProducts
       .concat(
@@ -137,7 +136,7 @@ async function syncOzon(
     };
   });
 
-  return { products: newProducts, transactions };
+  return { products: newProducts, transactions, warning: txData.warning };
 }
 
 // ─── Wildberries ──────────────────────────────────────────────────────────────
@@ -221,11 +220,9 @@ async function syncWb(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ apiKey }),
   });
-  if (!txRes.ok) {
-    const err = await txRes.json().catch(() => ({ error: txRes.statusText }));
-    throw new Error(err.error ?? "Ошибка получения транзакций WB");
-  }
-  const txData = (await txRes.json()) as { rows: WbRow[] };
+  const txData = txRes.ok
+    ? ((await txRes.json().catch(() => ({}))) as { rows?: WbRow[]; warning?: string })
+    : { rows: [], warning: `WB транзакции недоступны (${txRes.status})` };
 
   const transactions: Omit<Transaction, "id">[] = [];
   for (const row of txData.rows ?? []) {
