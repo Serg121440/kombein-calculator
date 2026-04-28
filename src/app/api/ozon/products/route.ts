@@ -15,10 +15,14 @@ function ozonHint(msg: string): string {
 
 export async function POST(req: NextRequest) {
   try {
-    const { apiKey, clientId } = (await req.json()) as {
-      apiKey: string;
-      clientId: string;
-    };
+    const body = await req.json() as { apiKey?: string; clientId?: string };
+    const { apiKey, clientId } = body;
+
+    console.log("[ozon/products] clientId=%s keyLen=%d keyPrefix=%s",
+      clientId,
+      apiKey?.length ?? 0,
+      apiKey?.slice(0, 8) ?? "(none)",
+    );
 
     if (!apiKey || !clientId) {
       return NextResponse.json(
@@ -28,10 +32,11 @@ export async function POST(req: NextRequest) {
     }
 
     const products = await fetchAllProducts(apiKey, clientId);
+    console.log("[ozon/products] success count=%d", products.length);
     return NextResponse.json({ products });
   } catch (err) {
     const msg = (err as Error).message;
-    console.error("[ozon/products]", msg);
+    console.error("[ozon/products] error:", msg);
     return NextResponse.json({ error: msg + ozonHint(msg) }, { status: 500 });
   }
 }
