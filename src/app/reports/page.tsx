@@ -163,13 +163,19 @@ export default function ReportsPage() {
                 .sort((a, b) => b.importedAt.localeCompare(a.importedAt))
                 .map((r) => {
                   const store = stores.find((s) => s.id === r.storeId);
+                  const isEmpty = r.rowsImported === 0 && r.rowsTotal > 0;
                   return (
-                    <tr key={r.id}>
-                      <td className="font-medium">{r.fileName}</td>
+                    <tr key={r.id} className={isEmpty ? "bg-amber-50" : ""}>
+                      <td className="font-medium">
+                        {r.fileName}
+                        {isEmpty && (
+                          <span className="ml-2 badge-warning text-xs">0 строк — загрузите снова</span>
+                        )}
+                      </td>
                       <td>{store?.name ?? "—"}</td>
                       <td>{formatDateTime(r.importedAt)}</td>
                       <td className="text-right">{r.rowsTotal}</td>
-                      <td className="text-right text-emerald-700">
+                      <td className={`text-right font-medium ${isEmpty ? "text-amber-700" : "text-emerald-700"}`}>
                         {r.rowsImported}
                       </td>
                       <td className="text-right text-sky-700">
@@ -180,20 +186,30 @@ export default function ReportsPage() {
                         {r.rowsErrors}
                       </td>
                       <td className="text-right">
-                        <button
-                          className="btn-danger"
-                          onClick={() => {
-                            if (
-                              confirm(
-                                "Удалить отчёт и все его транзакции?",
-                              )
-                            ) {
-                              removeReport(r.id);
-                            }
-                          }}
-                        >
-                          Удалить
-                        </button>
+                        <div className="flex gap-1 justify-end">
+                          {isEmpty && (
+                            <button
+                              className="btn-primary text-xs"
+                              onClick={() => {
+                                setSelectedStore(r.storeId);
+                                removeReport(r.id);
+                                setOpen(true);
+                              }}
+                            >
+                              Загрузить снова
+                            </button>
+                          )}
+                          <button
+                            className="btn-danger text-xs"
+                            onClick={() => {
+                              if (confirm("Удалить отчёт и все его транзакции?")) {
+                                removeReport(r.id);
+                              }
+                            }}
+                          >
+                            Удалить
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );

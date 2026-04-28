@@ -229,9 +229,22 @@ async function syncWb(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ apiKey }),
   });
-  const txData = txRes.ok
-    ? ((await txRes.json().catch(() => ({}))) as { rows?: WbRow[]; warning?: string })
-    : { rows: [], warning: `WB транзакции недоступны (${txRes.status})` };
+  let txData: { rows?: WbRow[]; warning?: string };
+  if (txRes.ok) {
+    txData = (await txRes.json().catch(() => ({}))) as { rows?: WbRow[]; warning?: string };
+  } else if (txRes.status === 401 || txRes.status === 403) {
+    txData = {
+      rows: [],
+      warning: `WB: нет доступа к статистике (${txRes.status}). Перейдите в WB Seller → Настройки → Доступ к API → включите разрешение «Статистика» для ключа.`,
+    };
+  } else if (txRes.status === 404) {
+    txData = {
+      rows: [],
+      warning: `WB: эндпоинт статистики не найден (404). Убедитесь, что у API-ключа есть разрешение «Статистика». Для загрузки транзакций используйте раздел «Отчёты» (ручная загрузка Excel).`,
+    };
+  } else {
+    txData = { rows: [], warning: `WB: транзакции недоступны (${txRes.status})` };
+  }
 
   const transactions: Omit<Transaction, "id">[] = [];
   for (const row of txData.rows ?? []) {
