@@ -32,9 +32,14 @@ export default function ProductPage() {
 
   const [model, setModel] = useState<EconomicsModel>("MODEL2");
   const [periodKey, setPeriodKey] = useState<PeriodKey>("30d");
+  const [customFrom, setCustomFrom] = useState<string>("");
+  const [customTo, setCustomTo] = useState<string>("");
   const [redemptionPct, setRedemptionPct] = useState(DEFAULT_REDEMPTION);
 
-  const period = useMemo(() => buildPeriod(periodKey), [periodKey]);
+  const period = useMemo(
+    () => buildPeriod(periodKey, customFrom && customTo ? { from: customFrom, to: customTo } : undefined),
+    [periodKey, customFrom, customTo],
+  );
 
   if (!product) {
     return (
@@ -68,7 +73,13 @@ export default function ProductPage() {
         actions={
           <div className="flex flex-wrap items-center gap-2">
             {model !== "MODEL1" && (
-              <PeriodPicker value={periodKey} onChange={setPeriodKey} />
+              <PeriodPicker
+                value={periodKey}
+                onChange={setPeriodKey}
+                customFrom={customFrom}
+                customTo={customTo}
+                onCustomChange={(f, t) => { setCustomFrom(f); setCustomTo(t); }}
+              />
             )}
             <ModelPicker value={model} onChange={setModel} />
           </div>

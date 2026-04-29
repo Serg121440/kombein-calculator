@@ -25,6 +25,34 @@ export default function TariffsPage() {
   const bulkAddTariffs = useAppStore((s) => s.bulkAddTariffs);
 
   const [tab, setTab] = useState<Platform>("OZON");
+
+  function downloadTemplate(platform: Platform) {
+    const ozonCsv = [
+      "Категория,Комиссия (%),Логистика (₽),Хранение (₽/л/сут)",
+      "Электроника,9,75,0.15",
+      "Одежда,15,65,0.12",
+      "Обувь,15,80,0.12",
+      "Красота и здоровье,28,65,0.15",
+      "Спорт,12,75,0.15",
+    ].join("\n");
+    const wbCsv = [
+      "Предмет,Комиссия (%),Доставка (₽),Хранение (₽/л/сут)",
+      "Электроника,10,60,0.10",
+      "Одежда,20,55,0.10",
+      "Обувь,20,65,0.10",
+      "Красота,25,55,0.10",
+      "Спорт,15,60,0.10",
+    ].join("\n");
+    const csv = platform === "OZON" ? ozonCsv : wbCsv;
+    const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = platform === "OZON" ? "ozon_tariffs_template.csv" : "wb_tariffs_template.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   const [editing, setEditing] = useState<Tariff | "new" | null>(null);
   const [form, setForm] = useState({
     storeId: "",
@@ -130,6 +158,13 @@ export default function TariffsPage() {
         subtitle="Комиссии, логистика, хранение и эквайринг"
         actions={
           <>
+            <button
+              className="btn-secondary"
+              onClick={() => downloadTemplate(tab)}
+              title={`Скачать шаблон CSV для ${tab === "OZON" ? "Ozon" : "Wildberries"}`}
+            >
+              Скачать шаблон
+            </button>
             <label className="btn-secondary cursor-pointer">
               Импорт XLSX/CSV
               <input

@@ -49,9 +49,14 @@ export default function AnalyticsPage() {
   const transactions = useAppStore((s) => s.transactions);
 
   const [periodKey, setPeriodKey] = useState<PeriodKey>("30d");
+  const [customFrom, setCustomFrom] = useState<string>("");
+  const [customTo, setCustomTo] = useState<string>("");
   const [storeId, setStoreId] = useState("ALL");
 
-  const period = useMemo(() => buildPeriod(periodKey), [periodKey]);
+  const period = useMemo(
+    () => buildPeriod(periodKey, customFrom && customTo ? { from: customFrom, to: customTo } : undefined),
+    [periodKey, customFrom, customTo],
+  );
 
   // Build "previous" period of equal length
   const previousPeriod = useMemo(() => {
@@ -196,7 +201,13 @@ export default function AnalyticsPage() {
                 </option>
               ))}
             </select>
-            <PeriodPicker value={periodKey} onChange={setPeriodKey} />
+            <PeriodPicker
+              value={periodKey}
+              onChange={setPeriodKey}
+              customFrom={customFrom}
+              customTo={customTo}
+              onCustomChange={(f, t) => { setCustomFrom(f); setCustomTo(t); }}
+            />
             <button
               className="btn-secondary"
               onClick={() => exportTransactionsXlsx(filteredTxs)}

@@ -99,42 +99,168 @@ export async function parseTariffsFile(
   const json = rowsFromSheet(sheet);
   const errors: string[] = [];
   const rows: Omit<Tariff, "id" | "createdAt">[] = [];
+  if (json.length === 0) return { rows, errors };
+
+  const headers = Object.keys(json[0]);
+  const hset = new Set(headers.map(normKey));
+
+  // Detect multi-column format (Ozon/WB commission tables):
+  // each row = one category, columns = commission%, logistics, storage, etc.
+  const hasMultiCol =
+    (hset.has("комиссия") ||
+      hset.has("комиссия%") ||
+      hset.has("ставкакомиссии") ||
+      hset.has("комиссиявпроцентах")) &&
+    (hset.has("логистика") ||
+      hset.has("стоимостьлогистики") ||
+      hset.has("доставка") ||
+      hset.has("логистикафбо") ||
+      hset.has("услугипологистике"));
+
+  const effectiveFrom = new Date(new Date().getFullYear(), 0, 1).toISOString();
+
+  if (hasMultiCol) {
+    // Multi-column mode: one row → multiple tariff entries
+    json.forEach((row, i) => {
+      const lineNo = i + 2;
+      const category = String(
+        pick(row, [
+          "category", "категория", "наименованиекатегории",
+          "предмет", "категориятоваров", "name",
+        ]) ?? "",
+      ).trim() || "*";
+
+      const commRaw = pick(row, [
+        "комиссия", "комиссия%", "ставкакомиссии", "commission",
+        "комиссиявпроцентах", "ставкакомиссии%",
+      ]);
+      const logRaw = pick(row, [
+        "логистика", "логистикафбо", "стоимостьлогистики",
+        "доставка", "услугипологистике", "logistics",
+      ]);
+      const storRaw = pick(row, [
+        "хранение", "storage", "хранениефбо",
+      ]);
+      const lastMileRaw = pick(row, [
+        "последняямиля", "lastmile", "последняямиля₽",
+      ]);
+      const acquiringRaw = pick(row, [
+        "эквайринг", "acquiring",
+      ]);
+
+      let added = 0;
+
+      if (commRaw !== undefined && commRaw !== "") {
+        const v = parseNumber(commRaw);
+        rows.push({ storeId, platform, type: "COMMISSION", category, value: v, effectiveFrom, source: "FILE" });
+        added++;
+      }
+      if (logRaw !== undefined && logRaw !== "") {
+        const v = parseNumber(logRaw);
+        if (v > 0) {
+          rows.push({ storeId, platform, type: "LOGISTICS", category, value: v, effectiveFrom, source: "FILE" });
+          added++;
+        }
+      }
+      if (storRaw !== undefined && storRaw !== "") {
+        const v = parseNumber(storRaw);
+        if (v > 0) {
+          rows.push({ storeId, platform, type: "STORAGE", category, value: v, effectiveFrom, source: "FILE" });
+          added++;
+        }
+      }
+      if (lastMileRaw !== undefined && lastMileRaw !== "") {
+        const v = parseNumber(lastMileRaw);
+        if (v > 0) {
+          rows.push({ storeId, platform, type: "LAST_MILE", category, value: v, effectiveFrom, source: "FILE" });
+          added++;
+        }
+      }
+      if (acquiringRaw !== undefined && acquiringRaw !== "") {
+        const v = parseNumber(acquiringRaw);
+        if (v > 0) {
+          rows.push({ storeId, platform, type: "ACQUIRING", category, value: v, effectiveFrom, source: "FILE" });
+          added++;
+        }
+      }
+      if (added === 0) {
+        errors.push(`Строка ${lineNo}: нет распознанных значений`);
+      }
+    });
+  } else {
+    // Single-row mode: each row has explicit "type" column
+    json.forEach((row, i) => {
+      const lineNo = i + 2;
+      const typeRaw = String(
+        pick(row, ["type", "тип", "категория тарифа"]) ?? "",
+      ).toLowerCase();
+      const t = TARIFF_TYPE_MAP[normKey(typeRaw)];
+      if (!t) {
+        errors.push(`Строка ${lineNo}: неизвестный тип "${typeRaw}"`);
+        return;
+      }
+      const category = String(
+        pick(row, ["category", "категория"]) ?? "*",
+      ).trim() || "*";
+      const valueRaw = pick(row, ["value", "значение", "процент", "сумма"]);
+      const value = parseNumber(valueRaw);
+      if (!Number.isFinite(value)) {
+        errors.push(`Строка ${lineNo}: некорректное значение`);
+        return;
+      }
+      const formula = String(pick(row, ["formula", "формула"]) ?? "") || undefined;
+      const fromRaw = pick(row, ["from", "с", "effective_from", "effectivefrom"]);
+      const toRaw = pick(row, ["to", "по", "effective_to", "effectiveto"]);
+      rows.push({
+        storeId,
+        platform,
+        type: t,
+        category,
+        value,
+        formula,
+        effectiveFrom: fromRaw ? parseDate(fromRaw) : effectiveFrom,
+        effectiveTo: toRaw ? parseDate(toRaw) : undefined,
+        source: "FILE",
+      });
+    });
+  }
+
+  return { rows, errors };
+}
+
+/** Parse a cost/category import file (CSV or XLSX).
+ *  Expected columns: SKU (required), Себестоимость (required), Категория (optional).
+ */
+export async function parseCostFile(file: File): Promise<{
+  rows: Array<{ sku: string; purchasePrice: number; category?: string }>;
+  errors: string[];
+}> {
+  const wb = await readWorkbook(file);
+  const sheet = wb.Sheets[wb.SheetNames[0]];
+  const json = rowsFromSheet(sheet);
+  const errors: string[] = [];
+  const rows: Array<{ sku: string; purchasePrice: number; category?: string }> = [];
 
   json.forEach((row, i) => {
     const lineNo = i + 2;
-    const typeRaw = String(
-      pick(row, ["type", "тип", "категория тарифа"]) ?? "",
-    ).toLowerCase();
-    const t = TARIFF_TYPE_MAP[normKey(typeRaw)];
-    if (!t) {
-      errors.push(`Строка ${lineNo}: неизвестный тип "${typeRaw}"`);
+    const sku = String(
+      pick(row, [
+        "sku", "артикул", "offer_id", "offerid",
+        "vendor_code", "vendorcode", "артикулпродавца",
+      ]) ?? "",
+    ).trim();
+    if (!sku) {
+      errors.push(`Строка ${lineNo}: нет SKU — пропуск`);
       return;
     }
-    const category = String(
-      pick(row, ["category", "категория"]) ?? "*",
-    ).trim() || "*";
-    const valueRaw = pick(row, ["value", "значение", "процент", "сумма"]);
-    const value = parseNumber(valueRaw);
-    if (!Number.isFinite(value)) {
-      errors.push(`Строка ${lineNo}: некорректное значение`);
-      return;
-    }
-    const formula = String(pick(row, ["formula", "формула"]) ?? "") || undefined;
-    const fromRaw = pick(row, ["from", "с", "effective_from", "effectivefrom"]);
-    const toRaw = pick(row, ["to", "по", "effective_to", "effectiveto"]);
-    rows.push({
-      storeId,
-      platform,
-      type: t,
-      category,
-      value,
-      formula,
-      effectiveFrom: fromRaw
-        ? parseDate(fromRaw)
-        : new Date(2024, 0, 1).toISOString(),
-      effectiveTo: toRaw ? parseDate(toRaw) : undefined,
-      source: "FILE",
-    });
+    const priceRaw = pick(row, [
+      "purchaseprice", "себестоимость", "cost", "закупочнаяцена",
+      "ценазакупки", "purchase_price", "costprice",
+    ]);
+    const purchasePrice = parseNumber(priceRaw);
+    const category =
+      String(pick(row, ["category", "категория"]) ?? "").trim() || undefined;
+    rows.push({ sku, purchasePrice, category });
   });
 
   return { rows, errors };

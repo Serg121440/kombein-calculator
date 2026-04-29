@@ -28,9 +28,14 @@ export default function EconomicsPage() {
   const [model, setModel] = useState<EconomicsModel>("MODEL1");
   const [storeId, setStoreId] = useState("ALL");
   const [periodKey, setPeriodKey] = useState<PeriodKey>("30d");
+  const [customFrom, setCustomFrom] = useState<string>("");
+  const [customTo, setCustomTo] = useState<string>("");
   const [redemptionPct, setRedemptionPct] = useState(DEFAULT_REDEMPTION);
 
-  const period = useMemo(() => buildPeriod(periodKey), [periodKey]);
+  const period = useMemo(
+    () => buildPeriod(periodKey, customFrom && customTo ? { from: customFrom, to: customTo } : undefined),
+    [periodKey, customFrom, customTo],
+  );
 
   const filtered = useMemo(
     () =>
@@ -84,7 +89,13 @@ export default function EconomicsPage() {
               ))}
             </select>
             {model !== "MODEL1" && (
-              <PeriodPicker value={periodKey} onChange={setPeriodKey} />
+              <PeriodPicker
+                value={periodKey}
+                onChange={setPeriodKey}
+                customFrom={customFrom}
+                customTo={customTo}
+                onCustomChange={(f, t) => { setCustomFrom(f); setCustomTo(t); }}
+              />
             )}
             <ModelPicker value={model} onChange={setModel} />
           </div>

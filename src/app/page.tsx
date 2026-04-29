@@ -33,8 +33,13 @@ export default function DashboardPage() {
   const settings = useAppStore((s) => s.settings);
 
   const [periodKey, setPeriodKey] = useState<PeriodKey>("30d");
+  const [customFrom, setCustomFrom] = useState<string>("");
+  const [customTo, setCustomTo] = useState<string>("");
   const [storeId, setStoreId] = useState<string>("ALL");
-  const period = useMemo(() => buildPeriod(periodKey), [periodKey]);
+  const period = useMemo(
+    () => buildPeriod(periodKey, customFrom && customTo ? { from: customFrom, to: customTo } : undefined),
+    [periodKey, customFrom, customTo],
+  );
 
   const targetStores = useMemo(
     () => (storeId === "ALL" ? stores : stores.filter((s) => s.id === storeId)),
@@ -220,7 +225,13 @@ export default function DashboardPage() {
                 </option>
               ))}
             </select>
-            <PeriodPicker value={periodKey} onChange={setPeriodKey} />
+            <PeriodPicker
+              value={periodKey}
+              onChange={setPeriodKey}
+              customFrom={customFrom}
+              customTo={customTo}
+              onCustomChange={(f, t) => { setCustomFrom(f); setCustomTo(t); }}
+            />
           </>
         }
       />

@@ -9,6 +9,8 @@ import type { Product } from "@/lib/types";
 import { formatRub } from "@/lib/format";
 import { calculatePlan } from "@/lib/economics";
 import { exportProductsCsv } from "@/lib/export";
+import { parseCostFile } from "@/lib/import";
+import { useToast } from "@/components/Toast";
 
 const PAGE_SIZE = 20;
 
@@ -21,7 +23,10 @@ export default function ProductsPage() {
   const updateProduct = useAppStore((s) => s.updateProduct);
   const removeProduct = useAppStore((s) => s.removeProduct);
 
+  const { success, error: toastError } = useToast();
   const [openForm, setOpenForm] = useState<null | Product | "new">(null);
+  const [costModalOpen, setCostModalOpen] = useState(false);
+  const [costBusy, setCostBusy] = useState(false);
   const [storeFilter, setStoreFilter] = useState("ALL");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
@@ -83,6 +88,50 @@ export default function ProductsPage() {
     setOpenForm(p);
   }
 
+  function downloadCostTemplate() {
+    const csv = "SKU,Себестоимость,Категория\nexample-sku-001,500,Электроника\nexample-sku-002,1200,Одежда\n";
+    const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "cost_template.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function onCostFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setCostBusy(true);
+    try {
+      const { rows, errors } = await parseCostFile(file);
+      let updated = 0;
+      for (const row of rows) {
+        const match = products.find(
+          (p) =>
+            p.sku.toLowerCase() === row.sku.toLowerCase() &&
+            (storeFilter === "ALL" || p.storeId === storeFilter),
+        );
+        if (match) {
+          const patch: Partial<Product> = { purchasePrice: row.purchasePrice };
+          if (row.category) patch.category = row.category;
+          updateProduct(match.id, patch);
+          updated++;
+        }
+      }
+      success(
+        `Обновлено ${updated} из ${rows.length} товаров` +
+          (errors.length > 0 ? ` · ${errors.length} ошибок` : ""),
+      );
+      setCostModalOpen(false);
+    } catch (err) {
+      toastError("Ошибка файла: " + (err as Error).message);
+    } finally {
+      setCostBusy(false);
+      e.target.value = "";
+    }
+  }
+
   function submit() {
     if (!form.storeId || !form.sku.trim() || !form.name.trim()) return;
     if (openForm === "new") {
@@ -105,6 +154,14 @@ export default function ProductsPage() {
               onClick={() => exportProductsCsv(filtered, tariffs, settings)}
             >
               Экспорт CSV
+            </button>
+            <button
+              className="btn-secondary"
+              onClick={() => setCostModalOpen(true)}
+              disabled={products.length === 0}
+              title="Загрузить себестоимость и категории из файла"
+            >
+              Загрузить себест.
             </button>
             <button
               className="btn-primary"
@@ -458,6 +515,49 @@ export default function ProductsPage() {
                 }
               />
             </div>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={costModalOpen}
+        onClose={() => !costBusy && setCostModalOpen(false)}
+        title="Загрузить себестоимости"
+        footer={
+          <button
+            className="btn-secondary"
+            onClick={() => setCostModalOpen(false)}
+            disabled={costBusy}
+          >
+            Закрыть
+          </button>
+        }
+      >
+        <div className="grid gap-4">
+          <div className="card p-3 bg-blue-50 border-blue-200 text-blue-800 text-sm">
+            <p className="font-medium mb-1">Формат файла</p>
+            <p>CSV или XLSX с колонками: <code className="bg-blue-100 px-1 rounded">SKU</code>, <code className="bg-blue-100 px-1 rounded">Себестоимость</code>, <code className="bg-blue-100 px-1 rounded">Категория</code> (необяз.).</p>
+            <p className="mt-1 text-xs text-blue-600">SKU должен совпадать с артикулом товара в системе.</p>
+          </div>
+          <div>
+            <button className="btn-secondary w-full" onClick={downloadCostTemplate}>
+              Скачать шаблон CSV
+            </button>
+          </div>
+          <div>
+            <label className="label">Загрузить файл</label>
+            <input
+              className="input"
+              type="file"
+              accept=".csv,.xlsx,.xls"
+              onChange={onCostFile}
+              disabled={costBusy}
+            />
+            {storeFilter !== "ALL" && (
+              <p className="text-xs text-amber-600 mt-1">
+                Обновляются только товары магазина из выбранного фильтра.
+              </p>
+            )}
           </div>
         </div>
       </Modal>
