@@ -51,6 +51,15 @@ export default function TransactionsPage() {
     () => new Map(products.map((p) => [p.storeId + "|" + p.sku, p])),
     [products],
   );
+  // For returns/refunds that lack a SKU: look up the product via a sale tx
+  // sharing the same orderId+storeId.
+  const skuByOrderId = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const t of transactions) {
+      if (t.sku && t.orderId) m.set(t.storeId + "|" + t.orderId, t.sku);
+    }
+    return m;
+  }, [transactions]);
 
   const filtered = useMemo(() => {
     const from = new Date(period.from).getTime();
@@ -169,10 +178,13 @@ export default function TransactionsPage() {
               <tbody className="divide-y divide-gray-100">
                 {pageSlice.map((t) => {
                   const store = stores.find((s) => s.id === t.storeId);
+                  const effectiveSku =
+                    t.sku ??
+                    skuByOrderId.get(t.storeId + "|" + t.orderId);
                   const product =
                     (t.productId ? productById.get(t.productId) : undefined) ??
-                    (t.sku
-                      ? productByStoreAndSku.get(t.storeId + "|" + t.sku)
+                    (effectiveSku
+                      ? productByStoreAndSku.get(t.storeId + "|" + effectiveSku)
                       : undefined);
                   return (
                     <tr key={t.id}>
@@ -202,8 +214,8 @@ export default function TransactionsPage() {
                           >
                             {product.sku}
                           </Link>
-                        ) : t.sku ? (
-                          <span className="font-mono text-gray-400">{t.sku}</span>
+                        ) : effectiveSku ? (
+                          <span className="font-mono text-gray-400">{effectiveSku}</span>
                         ) : (
                           <span className="text-gray-300">—</span>
                         )}
