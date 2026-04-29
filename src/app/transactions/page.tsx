@@ -205,14 +205,14 @@ export default function TransactionsPage() {
                           {TYPE_LABELS[t.type] ?? t.type}
                         </span>
                       </td>
-                      <td className="text-xs max-w-[140px]">
+                      <td className="text-xs max-w-[160px]">
                         {product ? (
                           <Link
                             href={`/products/${product.id}`}
-                            className="text-brand-700 hover:underline font-mono"
-                            title={product.name}
+                            className="text-brand-700 hover:underline block truncate"
+                            title={`${product.name} (${product.sku})`}
                           >
-                            {product.sku}
+                            {product.name}
                           </Link>
                         ) : effectiveSku ? (
                           <span className="font-mono text-gray-400">{effectiveSku}</span>

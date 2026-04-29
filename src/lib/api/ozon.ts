@@ -41,6 +41,10 @@ interface InfoItem {
   id: number;
   offer_id: string;
   name: string;
+  /** FBO listing SKU — matches sku field in finance/transaction/list items */
+  fbo_sku?: number;
+  /** FBS listing SKU — matches sku field in finance/transaction/list items */
+  fbs_sku?: number;
   depth: number;
   width: number;
   height: number;
@@ -76,6 +80,10 @@ export interface OzonProduct {
   width_cm: number;
   height_cm: number;
   weight_kg: number;
+  /** Ozon FBO listing SKU — used to link transactions to products */
+  fbo_sku: number;
+  /** Ozon FBS listing SKU — used to link transactions to products */
+  fbs_sku: number;
 }
 
 // ─── Product list — cursor pagination ────────────────────────────────────────
@@ -284,6 +292,8 @@ export async function fetchAllProducts(
       width_cm: (info?.width ?? 0) * dimF,
       height_cm: (info?.height ?? 0) * dimF,
       weight_kg: (info?.weight ?? 0) * wF,
+      fbo_sku: info?.fbo_sku ?? 0,
+      fbs_sku: info?.fbs_sku ?? 0,
     };
   });
 }

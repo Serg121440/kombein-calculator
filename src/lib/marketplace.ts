@@ -53,13 +53,18 @@ interface OzonProductInfo {
   width_cm: number;
   height_cm: number;
   weight_kg: number;
+  fbo_sku: number;
+  fbs_sku: number;
 }
 
 interface OzonOperation {
   operation_id: number;
   operation_type: string;
   operation_date: string;
-  posting: { posting_number: string; items: Array<{ sku: number; name: string }> };
+  posting: {
+    posting_number: string;
+    items: Array<{ sku: number; name: string; offer_id?: string }>;
+  };
   amount: number;
 }
 
@@ -84,7 +89,8 @@ async function syncOzon(
   const existingSkus = new Set(
     existingProducts.filter((p) => p.storeId === store.id).map((p) => p.sku),
   );
-  const newProducts: Omit<Product, "id" | "createdAt">[] = (prodData.products ?? [])
+  const allOzonProducts = prodData.products ?? [];
+  const newProducts: Omit<Product, "id" | "createdAt">[] = allOzonProducts
     .filter((p) => !existingSkus.has(String(p.offer_id)))
     .map((p) => ({
       storeId: store.id,
@@ -100,6 +106,15 @@ async function syncOzon(
       active: true,
     }));
 
+  // Ozon finance API uses numeric listing SKU (fbo_sku/fbs_sku), not offer_id.
+  // Build numeric_listing_sku → offer_id so we can link transactions to products.
+  const listingSkuToOfferId = new Map<number, string>();
+  for (const p of allOzonProducts) {
+    const offerId = String(p.offer_id);
+    if (p.fbo_sku) listingSkuToOfferId.set(p.fbo_sku, offerId);
+    if (p.fbs_sku) listingSkuToOfferId.set(p.fbs_sku, offerId);
+  }
+
   // Sync transactions (last 30 days) — non-fatal: 404/403 returns empty list
   const txRes = await fetch("/api/ozon/transactions", {
     method: "POST",
@@ -110,29 +125,31 @@ async function syncOzon(
     operations?: OzonOperation[];
     warning?: string;
   };
-  const skuMap = new Map(
+
+  // offer_id → product.id map (includes both existing and newly synced products)
+  const skuToProductId = new Map(
     existingProducts
-      .concat(
-        newProducts.map((p) => ({ ...p, id: "", createdAt: "" })),
-      )
+      .concat(newProducts.map((p) => ({ ...p, id: "", createdAt: "" })))
       .filter((p) => p.storeId === store.id)
       .map((p) => [p.sku, p.id]),
   );
 
   const transactions: Omit<Transaction, "id">[] = (txData.operations ?? []).map((op) => {
-    // Ozon items have offer_id (string SKU), not numeric sku
-    const offerItem = op.posting?.items?.[0] as unknown as { offer_id?: string; sku?: number };
-    const postingSku = offerItem?.offer_id ?? String(offerItem?.sku ?? "");
+    const item = op.posting?.items?.[0];
+    // Prefer explicit offer_id; fall back to resolving numeric listing SKU
+    const offerId =
+      (item?.offer_id || "") ||
+      (item?.sku ? listingSkuToOfferId.get(item.sku) : undefined) ||
+      "";
     return {
       storeId: store.id,
-      sku: postingSku || undefined,
-      productId: postingSku ? skuMap.get(postingSku) : undefined,
+      sku: offerId || undefined,
+      productId: offerId ? skuToProductId.get(offerId) || undefined : undefined,
       orderId: op.posting?.posting_number ?? String(op.operation_id),
       date: op.operation_date ?? new Date().toISOString(),
       type: classifyOzonOperation(op.operation_type, op.amount),
       amount: op.amount,
       description: op.operation_type,
-      rawData: op as unknown as Record<string, unknown>,
       source: "api",
       externalId: String(op.operation_id),
     };
