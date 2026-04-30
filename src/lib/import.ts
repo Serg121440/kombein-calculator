@@ -254,108 +254,12 @@ export async function parseTariffsFile(
     }
   }
 
-  // ── Generic / user template format ───────────────────────────────────────
-  const json = rowsFromSheet(sheet);
-  if (json.length === 0) return { rows, errors };
-
-  const headers = Object.keys(json[0]);
-  const hset = new Set(headers.map(normKey));
-
-  // Diagnostic: if none of the expected columns found, report actual columns
-  const hasAnyKnownCol = hset.has("тип") || hset.has("type") || hset.has("комиссия") ||
-    hset.has("категория") || hset.has("предмет") || hset.has("типтовара");
-  if (!hasAnyKnownCol) {
-    const sample = headers.slice(0, 6).join(", ");
-    errors.push(`Формат файла не распознан. Найденные колонки: ${sample}`);
-    return { rows, errors };
-  }
-
-  // Multi-column template: one row per category, columns = commission, logistics, storage, …
-  const hasMultiCol =
-    (hset.has("комиссия") ||
-      hset.has("комиссия%") ||
-      hset.has("ставкакомиссии") ||
-      hset.has("комиссиявпроцентах")) &&
-    (hset.has("логистика") ||
-      hset.has("стоимостьлогистики") ||
-      hset.has("доставка") ||
-      hset.has("логистикафбо") ||
-      hset.has("услугипологистике"));
-
-  if (hasMultiCol) {
-    json.forEach((row, i) => {
-      const lineNo = i + 2;
-      const category = String(
-        pick(row, [
-          "category", "категория", "наименованиекатегории",
-          "предмет", "категориятоваров", "name",
-        ]) ?? "",
-      ).trim() || "*";
-
-      const commRaw = pick(row, [
-        "комиссия", "комиссия%", "ставкакомиссии", "commission",
-        "комиссиявпроцентах", "ставкакомиссии%",
-      ]);
-      const logRaw = pick(row, [
-        "логистика", "логистикафбо", "стоимостьлогистики",
-        "доставка", "услугипологистике", "logistics",
-      ]);
-      const storRaw = pick(row, ["хранение", "storage", "хранениефбо"]);
-      const lastMileRaw = pick(row, ["последняямиля", "lastmile", "последняямиля₽"]);
-      const acquiringRaw = pick(row, ["эквайринг", "acquiring"]);
-
-      let added = 0;
-      if (commRaw !== undefined && commRaw !== "") {
-        rows.push({ storeId, platform, type: "COMMISSION", category, value: parseNumber(commRaw), effectiveFrom, source: "FILE" });
-        added++;
-      }
-      if (logRaw !== undefined && logRaw !== "") {
-        const v = parseNumber(logRaw);
-        if (v > 0) { rows.push({ storeId, platform, type: "LOGISTICS", category, value: v, effectiveFrom, source: "FILE" }); added++; }
-      }
-      if (storRaw !== undefined && storRaw !== "") {
-        const v = parseNumber(storRaw);
-        if (v > 0) { rows.push({ storeId, platform, type: "STORAGE", category, value: v, effectiveFrom, source: "FILE" }); added++; }
-      }
-      if (lastMileRaw !== undefined && lastMileRaw !== "") {
-        const v = parseNumber(lastMileRaw);
-        if (v > 0) { rows.push({ storeId, platform, type: "LAST_MILE", category, value: v, effectiveFrom, source: "FILE" }); added++; }
-      }
-      if (acquiringRaw !== undefined && acquiringRaw !== "") {
-        const v = parseNumber(acquiringRaw);
-        if (v > 0) { rows.push({ storeId, platform, type: "ACQUIRING", category, value: v, effectiveFrom, source: "FILE" }); added++; }
-      }
-      if (added === 0) errors.push(`Строка ${lineNo}: нет распознанных значений`);
-    });
-  } else {
-    // Single-row mode: each row has explicit "type" column
-    json.forEach((row, i) => {
-      const lineNo = i + 2;
-      const typeRaw = String(pick(row, ["type", "тип", "категория тарифа"]) ?? "").toLowerCase();
-      const t = TARIFF_TYPE_MAP[normKey(typeRaw)];
-      if (!t) {
-        errors.push(`Строка ${lineNo}: неизвестный тип "${typeRaw}"`);
-        return;
-      }
-      const category = String(pick(row, ["category", "категория"]) ?? "*").trim() || "*";
-      const valueRaw = pick(row, ["value", "значение", "процент", "сумма"]);
-      const value = parseNumber(valueRaw);
-      if (!Number.isFinite(value)) {
-        errors.push(`Строка ${lineNo}: некорректное значение`);
-        return;
-      }
-      const formula = String(pick(row, ["formula", "формула"]) ?? "") || undefined;
-      const fromRaw = pick(row, ["from", "с", "effective_from", "effectivefrom"]);
-      const toRaw = pick(row, ["to", "по", "effective_to", "effectiveto"]);
-      rows.push({
-        storeId, platform, type: t, category, value, formula,
-        effectiveFrom: fromRaw ? parseDate(fromRaw) : effectiveFrom,
-        effectiveTo: toRaw ? parseDate(toRaw) : undefined,
-        source: "FILE",
-      });
-    });
-  }
-
+  // ── Fallback diagnostic ───────────────────────────────────────────────────
+  const dumpRows = rawRows.slice(0, 3).map((r, ri) => {
+    const cells = (r as unknown[]).filter((c) => String(c ?? "").trim()).slice(0, 5);
+    return `[R${ri + 1}] ${cells.join(" | ")}`;
+  }).join("  ");
+  errors.push(`Формат не распознан. Сообщите разработчику: ${dumpRows}`);
   return { rows, errors };
 }
 
