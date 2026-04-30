@@ -118,62 +118,73 @@ export async function parseTariffsFile(
     return Number.isFinite(n) ? n : 0;
   }
 
-  const h0 = rawRows[0].map((c) => normKey(String(c ?? "")));
-  const h1 = rawRows.length > 1 ? rawRows[1].map((c) => normKey(String(c ?? ""))) : [];
-
   // ── Ozon official commission table (2-row merged header) ─────────────────
-  // Row 0: "Прайс РФ (БЗ)" | "" | "FBO" | "" | "" | ...
-  // Row 1: "Категория" | "Тип товара" | "до 100 руб." | "свыше 100 до 300 руб." | "свыше 300 до 1500 руб." | ...
-  // Data: "Электроника" | "Смартфоны" | "43.00%" | ...
-  if (h0.some((h) => h === "fbo" || h.includes("fbo")) && h1.includes("типтовара")) {
-    const headers = rawRows[1].map((c) => String(c ?? ""));
-    const catIdx = headers.findIndex((h) => normKey(h) === "типтовара");
-    // First "свыше 300 до 1500" column belongs to FBO (before FBO Fresh, FBS, RFBS tiers)
-    const commIdx = headers.findIndex((h) => {
-      const n = normKey(h);
-      return n.includes("300") && n.includes("1500");
-    });
-    const ci = commIdx >= 0 ? commIdx : Math.max(catIdx + 1, 2);
-
-    for (let i = 2; i < rawRows.length; i++) {
-      const r = rawRows[i];
-      const category = String(r[catIdx] ?? "").trim();
-      if (!category || category === "Тип товара") continue;
-      const value = pctVal(r[ci]);
-      rows.push({
-        storeId, platform, type: "COMMISSION",
-        category, value, effectiveFrom, source: "FILE",
-      });
+  // Scan first 5 rows for "Тип товара" (header row may not always be row 1)
+  // Row N-1: "Прайс РФ (БЗ)" | "" | "FBO" | "" | ...
+  // Row N:   "Категория" | "Тип товара" | "до 100 руб." | "свыше 300 до 1500 руб." | ...
+  {
+    let ozonHdrIdx = -1;
+    for (let ri = 0; ri < Math.min(6, rawRows.length); ri++) {
+      const rn = rawRows[ri].map((c) => normKey(String(c ?? "")));
+      if (rn.includes("типтовара")) { ozonHdrIdx = ri; break; }
     }
-    return { rows, errors };
+    if (ozonHdrIdx >= 0) {
+      const headers = rawRows[ozonHdrIdx].map((c) => String(c ?? ""));
+      const catIdx = headers.findIndex((h) => normKey(h) === "типтовара");
+      // First "свыше 300 до 1500" column = FBO (appears before FBO Fresh, FBS, RFBS)
+      const commIdx = headers.findIndex((h) => {
+        const n = normKey(h);
+        return n.includes("300") && n.includes("1500");
+      });
+      const ci = commIdx >= 0 ? commIdx : Math.max(catIdx + 1, 2);
+
+      for (let i = ozonHdrIdx + 1; i < rawRows.length; i++) {
+        const r = rawRows[i];
+        const category = String(r[catIdx] ?? "").trim();
+        if (!category || normKey(category) === "типтовара") continue;
+        const value = pctVal(r[ci]);
+        rows.push({
+          storeId, platform, type: "COMMISSION",
+          category, value, effectiveFrom, source: "FILE",
+        });
+      }
+      return { rows, errors };
+    }
   }
 
   // ── WB official commission table (1-row header) ───────────────────────────
-  // Row 0: "Категория" | "Предмет" | "Склад WB, %" | "Склад продавца ..." | ...
-  // Data: "Авто" | "Авточехлы" | 29.5 | ...
-  if (
-    h0.includes("предмет") &&
-    h0.some((h) => h.includes("складwb") && !h.includes("продавца"))
-  ) {
-    const headers = rawRows[0].map((c) => String(c ?? ""));
-    const subjectIdx = headers.findIndex((h) => normKey(h) === "предмет");
-    const wbIdx = headers.findIndex((h) => {
-      const n = normKey(h);
-      return n.includes("складwb") && !n.includes("продавца");
-    });
-    const ci = wbIdx >= 0 ? wbIdx : subjectIdx + 1;
-
-    for (let i = 1; i < rawRows.length; i++) {
-      const r = rawRows[i];
-      const category = String(r[subjectIdx] ?? "").trim();
-      if (!category) continue;
-      const value = pctVal(r[ci]);
-      rows.push({
-        storeId, platform, type: "COMMISSION",
-        category, value, effectiveFrom, source: "FILE",
-      });
+  // Scan first 5 rows for "Предмет" + "Склад WB"
+  // Row N: "Категория" | "Предмет" | "Склад WB, %" | "Склад продавца ..." | ...
+  {
+    let wbHdrIdx = -1;
+    for (let ri = 0; ri < Math.min(6, rawRows.length); ri++) {
+      const rn = rawRows[ri].map((c) => normKey(String(c ?? "")));
+      if (
+        rn.includes("предмет") &&
+        rn.some((h) => h.includes("складwb") && !h.includes("продавца"))
+      ) { wbHdrIdx = ri; break; }
     }
-    return { rows, errors };
+    if (wbHdrIdx >= 0) {
+      const headers = rawRows[wbHdrIdx].map((c) => String(c ?? ""));
+      const subjectIdx = headers.findIndex((h) => normKey(h) === "предмет");
+      const wbIdx = headers.findIndex((h) => {
+        const n = normKey(h);
+        return n.includes("складwb") && !n.includes("продавца");
+      });
+      const ci = wbIdx >= 0 ? wbIdx : subjectIdx + 1;
+
+      for (let i = wbHdrIdx + 1; i < rawRows.length; i++) {
+        const r = rawRows[i];
+        const category = String(r[subjectIdx] ?? "").trim();
+        if (!category) continue;
+        const value = pctVal(r[ci]);
+        rows.push({
+          storeId, platform, type: "COMMISSION",
+          category, value, effectiveFrom, source: "FILE",
+        });
+      }
+      return { rows, errors };
+    }
   }
 
   // ── Generic / user template format ───────────────────────────────────────
@@ -412,21 +423,22 @@ export async function parseReportFile(
   const wb = await readWorkbook(file);
   const sheet = wb.Sheets[wb.SheetNames[0]];
 
-  // Check for commission/tariff table uploaded to the wrong section (2-row header)
+  // Detect commission/tariff table uploaded to the wrong section — scan first 6 rows
   const rawRows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: "" });
-  if (rawRows.length >= 2) {
-    const h0 = rawRows[0].map((c) => normKey(String(c ?? "")));
-    const h1 = rawRows[1].map((c) => normKey(String(c ?? "")));
-    const isOzonCommission = h0.some((h) => h === "fbo" || h.includes("fbo")) && h1.includes("типтовара");
-    const isWbCommission = h0.includes("предмет") && h0.some((h) => h.includes("складwb") && !h.includes("продавца"));
-    if (isOzonCommission || isWbCommission) {
-      return {
-        transactions: [],
-        errors: ["Это файл с таблицей комиссий маркетплейса. Загрузите его в раздел «Тарифы» → «Импорт XLSX/CSV»."],
-        format: "GENERIC",
-        platform: "OZON",
-      };
-    }
+  const isCommissionTable = rawRows.slice(0, 6).some((r) => {
+    const rn = (r as unknown[]).map((c) => normKey(String(c ?? "")));
+    return (
+      rn.includes("типтовара") ||
+      (rn.includes("предмет") && rn.some((h) => h.includes("складwb")))
+    );
+  });
+  if (isCommissionTable) {
+    return {
+      transactions: [],
+      errors: ["Это файл с таблицей комиссий маркетплейса. Загрузите его в раздел «Тарифы» → «Импорт XLSX/CSV»."],
+      format: "GENERIC",
+      platform: "OZON",
+    };
   }
 
   const json = rowsFromSheet(sheet);
