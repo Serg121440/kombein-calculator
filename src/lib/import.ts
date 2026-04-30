@@ -118,66 +118,133 @@ export async function parseTariffsFile(
     return Number.isFinite(n) ? n : 0;
   }
 
-  // ── Ozon official commission table (2-row merged header) ─────────────────
-  // Scan first 5 rows for "Тип товара" (header row may not always be row 1)
-  // Row N-1: "Прайс РФ (БЗ)" | "" | "FBO" | "" | ...
-  // Row N:   "Категория" | "Тип товара" | "до 100 руб." | "свыше 300 до 1500 руб." | ...
+  // Count how many cells in a row look like a percent/commission value
+  function pctCellCount(r: unknown[]): number {
+    return r.filter((c) => {
+      const s = String(c ?? "").trim();
+      return s !== "" && /^[\d,. ]+%?$/.test(s) && parseFloat(s.replace(",", ".").replace("%", "")) > 0;
+    }).length;
+  }
+
+  const lowerName = file.name.toLowerCase();
+  const isOzonFile =
+    lowerName.includes("таблица") ||
+    lowerName.includes("вознаграждения") ||
+    lowerName.includes("категорий");
+  const isWbFile =
+    lowerName.includes("comission") ||
+    lowerName.includes("commission") ||
+    lowerName.includes("комиссия");
+
+  // ── Ozon official commission table ───────────────────────────────────────
+  // Strategy 1: scan all rows for "Тип товара" column header
+  // Strategy 2: filename match + find header row by structure (row before data)
   {
     let ozonHdrIdx = -1;
-    for (let ri = 0; ri < Math.min(6, rawRows.length); ri++) {
+
+    // Text-based scan — scan all rows (not just first 6)
+    for (let ri = 0; ri < Math.min(20, rawRows.length); ri++) {
       const rn = rawRows[ri].map((c) => normKey(String(c ?? "")));
-      if (rn.includes("типтовара")) { ozonHdrIdx = ri; break; }
+      if (rn.includes("типтовара") || rn.includes("наименованиекатегории") || rn.includes("видтовара")) {
+        ozonHdrIdx = ri;
+        break;
+      }
     }
+
+    // Structure-based fallback: filename matches Ozon table, find first data row with pct values
+    if (ozonHdrIdx < 0 && isOzonFile) {
+      for (let ri = 1; ri < Math.min(15, rawRows.length); ri++) {
+        if (pctCellCount(rawRows[ri]) >= 3) {
+          ozonHdrIdx = ri - 1; // header is the row just before data
+          break;
+        }
+      }
+    }
+
     if (ozonHdrIdx >= 0) {
       const headers = rawRows[ozonHdrIdx].map((c) => String(c ?? ""));
-      const catIdx = headers.findIndex((h) => normKey(h) === "типтовара");
-      // First "свыше 300 до 1500" column = FBO (appears before FBO Fresh, FBS, RFBS)
-      const commIdx = headers.findIndex((h) => {
+      // Category column: look for "Тип товара" or "Наименование" or fall back to column 1
+      let catIdx = headers.findIndex((h) => {
+        const n = normKey(h);
+        return n === "типтовара" || n === "наименованиекатегории" || n === "видтовара";
+      });
+      if (catIdx < 0) {
+        // Use the last non-empty text column before the numeric columns
+        catIdx = headers.reduce((best, h, i) => {
+          const v = String(rawRows[Math.min(ozonHdrIdx + 1, rawRows.length - 1)][i] ?? "");
+          const isNumeric = /^[\d,. ]+%?$/.test(v.trim()) && v.trim() !== "";
+          return !isNumeric && h.trim() !== "" ? i : best;
+        }, 0);
+      }
+      // First "свыше 300 до 1500" column = FBO primary tier
+      let commIdx = headers.findIndex((h) => {
         const n = normKey(h);
         return n.includes("300") && n.includes("1500");
       });
-      const ci = commIdx >= 0 ? commIdx : Math.max(catIdx + 1, 2);
+      // Fallback: first column with a numeric value in the first data row
+      if (commIdx < 0) {
+        const dataRow = rawRows[ozonHdrIdx + 1] ?? [];
+        commIdx = dataRow.findIndex((c, i) => i > catIdx && pctVal(c) > 0);
+      }
+      if (commIdx < 0) commIdx = catIdx + 1;
 
+      let parsed = 0;
       for (let i = ozonHdrIdx + 1; i < rawRows.length; i++) {
         const r = rawRows[i];
         const category = String(r[catIdx] ?? "").trim();
-        if (!category || normKey(category) === "типтовара") continue;
-        const value = pctVal(r[ci]);
+        if (!category || pctCellCount([category]) > 0) continue;
+        const value = pctVal(r[commIdx]);
         rows.push({
           storeId, platform, type: "COMMISSION",
           category, value, effectiveFrom, source: "FILE",
         });
+        parsed++;
+      }
+      if (parsed === 0 && ozonHdrIdx >= 0) {
+        errors.push(`Колонки в строке ${ozonHdrIdx + 1}: ${rawRows[ozonHdrIdx].filter(Boolean).slice(0, 8).join(" | ")}`);
       }
       return { rows, errors };
     }
   }
 
-  // ── WB official commission table (1-row header) ───────────────────────────
-  // Scan first 5 rows for "Предмет" + "Склад WB"
-  // Row N: "Категория" | "Предмет" | "Склад WB, %" | "Склад продавца ..." | ...
+  // ── WB official commission table ──────────────────────────────────────────
   {
     let wbHdrIdx = -1;
-    for (let ri = 0; ri < Math.min(6, rawRows.length); ri++) {
+
+    // Text-based scan
+    for (let ri = 0; ri < Math.min(20, rawRows.length); ri++) {
       const rn = rawRows[ri].map((c) => normKey(String(c ?? "")));
-      if (
-        rn.includes("предмет") &&
-        rn.some((h) => h.includes("складwb") && !h.includes("продавца"))
-      ) { wbHdrIdx = ri; break; }
+      if (rn.includes("предмет") && rn.some((h) => h.includes("складwb") && !h.includes("продавца"))) {
+        wbHdrIdx = ri;
+        break;
+      }
     }
+
+    // Structure-based fallback for WB
+    if (wbHdrIdx < 0 && isWbFile) {
+      for (let ri = 1; ri < Math.min(15, rawRows.length); ri++) {
+        if (pctCellCount(rawRows[ri]) >= 2) {
+          wbHdrIdx = ri - 1;
+          break;
+        }
+      }
+    }
+
     if (wbHdrIdx >= 0) {
       const headers = rawRows[wbHdrIdx].map((c) => String(c ?? ""));
-      const subjectIdx = headers.findIndex((h) => normKey(h) === "предмет");
-      const wbIdx = headers.findIndex((h) => {
+      let subjectIdx = headers.findIndex((h) => normKey(h) === "предмет");
+      if (subjectIdx < 0) subjectIdx = 1;
+      let wbIdx = headers.findIndex((h) => {
         const n = normKey(h);
         return n.includes("складwb") && !n.includes("продавца");
       });
-      const ci = wbIdx >= 0 ? wbIdx : subjectIdx + 1;
+      if (wbIdx < 0) wbIdx = subjectIdx + 1;
 
       for (let i = wbHdrIdx + 1; i < rawRows.length; i++) {
         const r = rawRows[i];
         const category = String(r[subjectIdx] ?? "").trim();
         if (!category) continue;
-        const value = pctVal(r[ci]);
+        const value = pctVal(r[wbIdx]);
         rows.push({
           storeId, platform, type: "COMMISSION",
           category, value, effectiveFrom, source: "FILE",
@@ -193,6 +260,15 @@ export async function parseTariffsFile(
 
   const headers = Object.keys(json[0]);
   const hset = new Set(headers.map(normKey));
+
+  // Diagnostic: if none of the expected columns found, report actual columns
+  const hasAnyKnownCol = hset.has("тип") || hset.has("type") || hset.has("комиссия") ||
+    hset.has("категория") || hset.has("предмет") || hset.has("типтовара");
+  if (!hasAnyKnownCol) {
+    const sample = headers.slice(0, 6).join(", ");
+    errors.push(`Формат файла не распознан. Найденные колонки: ${sample}`);
+    return { rows, errors };
+  }
 
   // Multi-column template: one row per category, columns = commission, logistics, storage, …
   const hasMultiCol =
