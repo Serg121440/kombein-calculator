@@ -55,6 +55,7 @@ interface OzonProductInfo {
   weight_kg: number;
   fbo_sku: number;
   fbs_sku: number;
+  type_name: string;
 }
 
 interface OzonOperation {
@@ -96,7 +97,7 @@ async function syncOzon(
       storeId: store.id,
       sku: String(p.offer_id),
       name: p.name ?? `Товар ${p.product_id}`,
-      category: "",
+      category: p.type_name,
       purchasePrice: 0,
       sellingPrice: p.selling_price,
       weightKg: p.weight_kg,

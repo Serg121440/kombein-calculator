@@ -51,6 +51,16 @@ interface InfoItem {
   weight: number;
   dimension_unit?: string;
   weight_unit?: string;
+  type_id?: number;
+  description_category_id?: number;
+}
+
+interface CategoryTreeNode {
+  description_category_id: number;
+  category_name: string;
+  disabled?: boolean;
+  children?: CategoryTreeNode[];
+  type?: Array<{ type_id: number; type_name: string; disabled?: boolean }>;
 }
 
 interface PriceItem {
@@ -84,6 +94,8 @@ export interface OzonProduct {
   fbo_sku: number;
   /** Ozon FBS listing SKU — used to link transactions to products */
   fbs_sku: number;
+  /** Ozon product type name (Тип товара) — used for tariff matching */
+  type_name: string;
 }
 
 // ─── Product list — cursor pagination ────────────────────────────────────────
@@ -245,6 +257,42 @@ export async function fetchTransactions(
   return { operations: all };
 }
 
+// ─── Category tree → type_id → type_name map ─────────────────────────────────
+
+function flattenTypeNames(nodes: CategoryTreeNode[], out: Map<number, string>): void {
+  for (const node of nodes) {
+    for (const t of node.type ?? []) {
+      if (!t.disabled) out.set(t.type_id, t.type_name);
+    }
+    if (node.children?.length) flattenTypeNames(node.children, out);
+  }
+}
+
+async function fetchTypeNameMap(
+  apiKey: string,
+  clientId: string,
+): Promise<Map<number, string>> {
+  const h = hdrs(apiKey, clientId);
+  try {
+    const res = await apiFetch(
+      `${BASE}/v4/category/tree`,
+      {
+        method: "POST",
+        headers: h,
+        body: JSON.stringify({ description_category_id: 0, language: "RU" }),
+      },
+      { label: "ozon:category/tree" },
+    );
+    const data = await parseJson<{ result: CategoryTreeNode[] }>(res);
+    const map = new Map<number, string>();
+    flattenTypeNames(data.result ?? [], map);
+    return map;
+  } catch (e: unknown) {
+    console.warn("[ozon] category/tree failed (non-fatal):", (e as Error).message);
+    return new Map();
+  }
+}
+
 // ─── Unified product fetch ────────────────────────────────────────────────────
 
 export async function fetchAllProducts(
@@ -256,9 +304,8 @@ export async function fetchAllProducts(
 
   const productIds = listItems.map((i) => i.product_id);
 
-  // Info and prices can be fetched in parallel (different endpoints).
-  // Both are best-effort — a 404 or permissions error must not abort the sync.
-  const [infoItems, priceItems] = await Promise.all([
+  // Info, prices and category tree fetched in parallel. All best-effort.
+  const [infoItems, priceItems, typeNameMap] = await Promise.all([
     fetchProductInfo(apiKey, clientId, productIds).catch((e: Error) => {
       console.warn("[ozon] product/info/list failed (non-fatal):", e.message);
       return [] as InfoItem[];
@@ -267,6 +314,7 @@ export async function fetchAllProducts(
       console.warn("[ozon] product/info/prices failed (non-fatal):", e.message);
       return [] as PriceItem[];
     }),
+    fetchTypeNameMap(apiKey, clientId),
   ]);
 
   const infoMap = new Map(infoItems.map((i) => [i.id, i]));
@@ -282,6 +330,9 @@ export async function fetchAllProducts(
     const dimF = dimUnit === "mm" ? 0.1 : 1;
     const wF = weightUnit === "g" ? 0.001 : 1;
 
+    const typeId = info?.type_id;
+    const typeName = typeId ? (typeNameMap.get(typeId) ?? "") : "";
+
     return {
       product_id: li.product_id,
       offer_id: li.offer_id,
@@ -294,6 +345,7 @@ export async function fetchAllProducts(
       weight_kg: (info?.weight ?? 0) * wF,
       fbo_sku: info?.fbo_sku ?? 0,
       fbs_sku: info?.fbs_sku ?? 0,
+      type_name: typeName,
     };
   });
 }
