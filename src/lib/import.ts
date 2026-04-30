@@ -96,16 +96,94 @@ export async function parseTariffsFile(
 }> {
   const wb = await readWorkbook(file);
   const sheet = wb.Sheets[wb.SheetNames[0]];
-  const json = rowsFromSheet(sheet);
   const errors: string[] = [];
   const rows: Omit<Tariff, "id" | "createdAt">[] = [];
+  const effectiveFrom = new Date(new Date().getFullYear(), 0, 1).toISOString();
+
+  // Read as raw arrays for multi-header format detection
+  const rawRows = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
+    header: 1,
+    defval: "",
+  });
+  if (rawRows.length === 0) return { rows, errors };
+
+  // Strip percent sign and parse; handles "43.00%", "29,50", 12
+  function pctVal(v: unknown): number {
+    if (typeof v === "number") return v;
+    const s = String(v ?? "")
+      .replace(/\s/g, "")
+      .replace(",", ".")
+      .replace(/%$/, "");
+    const n = parseFloat(s);
+    return Number.isFinite(n) ? n : 0;
+  }
+
+  const h0 = rawRows[0].map((c) => normKey(String(c ?? "")));
+  const h1 = rawRows.length > 1 ? rawRows[1].map((c) => normKey(String(c ?? ""))) : [];
+
+  // ── Ozon official commission table (2-row merged header) ─────────────────
+  // Row 0: "Прайс РФ (БЗ)" | "" | "FBO" | "" | "" | ...
+  // Row 1: "Категория" | "Тип товара" | "до 100 руб." | "свыше 100 до 300 руб." | "свыше 300 до 1500 руб." | ...
+  // Data: "Электроника" | "Смартфоны" | "43.00%" | ...
+  if (h0.some((h) => h === "fbo" || h.includes("fbo")) && h1.includes("типтовара")) {
+    const headers = rawRows[1].map((c) => String(c ?? ""));
+    const catIdx = headers.findIndex((h) => normKey(h) === "типтовара");
+    // First "свыше 300 до 1500" column belongs to FBO (before FBO Fresh, FBS, RFBS tiers)
+    const commIdx = headers.findIndex((h) => {
+      const n = normKey(h);
+      return n.includes("300") && n.includes("1500");
+    });
+    const ci = commIdx >= 0 ? commIdx : Math.max(catIdx + 1, 2);
+
+    for (let i = 2; i < rawRows.length; i++) {
+      const r = rawRows[i];
+      const category = String(r[catIdx] ?? "").trim();
+      if (!category || category === "Тип товара") continue;
+      const value = pctVal(r[ci]);
+      rows.push({
+        storeId, platform, type: "COMMISSION",
+        category, value, effectiveFrom, source: "FILE",
+      });
+    }
+    return { rows, errors };
+  }
+
+  // ── WB official commission table (1-row header) ───────────────────────────
+  // Row 0: "Категория" | "Предмет" | "Склад WB, %" | "Склад продавца ..." | ...
+  // Data: "Авто" | "Авточехлы" | 29.5 | ...
+  if (
+    h0.includes("предмет") &&
+    h0.some((h) => h.includes("складwb") && !h.includes("продавца"))
+  ) {
+    const headers = rawRows[0].map((c) => String(c ?? ""));
+    const subjectIdx = headers.findIndex((h) => normKey(h) === "предмет");
+    const wbIdx = headers.findIndex((h) => {
+      const n = normKey(h);
+      return n.includes("складwb") && !n.includes("продавца");
+    });
+    const ci = wbIdx >= 0 ? wbIdx : subjectIdx + 1;
+
+    for (let i = 1; i < rawRows.length; i++) {
+      const r = rawRows[i];
+      const category = String(r[subjectIdx] ?? "").trim();
+      if (!category) continue;
+      const value = pctVal(r[ci]);
+      rows.push({
+        storeId, platform, type: "COMMISSION",
+        category, value, effectiveFrom, source: "FILE",
+      });
+    }
+    return { rows, errors };
+  }
+
+  // ── Generic / user template format ───────────────────────────────────────
+  const json = rowsFromSheet(sheet);
   if (json.length === 0) return { rows, errors };
 
   const headers = Object.keys(json[0]);
   const hset = new Set(headers.map(normKey));
 
-  // Detect multi-column format (Ozon/WB commission tables):
-  // each row = one category, columns = commission%, logistics, storage, etc.
+  // Multi-column template: one row per category, columns = commission, logistics, storage, …
   const hasMultiCol =
     (hset.has("комиссия") ||
       hset.has("комиссия%") ||
@@ -117,10 +195,7 @@ export async function parseTariffsFile(
       hset.has("логистикафбо") ||
       hset.has("услугипологистике"));
 
-  const effectiveFrom = new Date(new Date().getFullYear(), 0, 1).toISOString();
-
   if (hasMultiCol) {
-    // Multi-column mode: one row → multiple tariff entries
     json.forEach((row, i) => {
       const lineNo = i + 2;
       const category = String(
@@ -138,70 +213,44 @@ export async function parseTariffsFile(
         "логистика", "логистикафбо", "стоимостьлогистики",
         "доставка", "услугипологистике", "logistics",
       ]);
-      const storRaw = pick(row, [
-        "хранение", "storage", "хранениефбо",
-      ]);
-      const lastMileRaw = pick(row, [
-        "последняямиля", "lastmile", "последняямиля₽",
-      ]);
-      const acquiringRaw = pick(row, [
-        "эквайринг", "acquiring",
-      ]);
+      const storRaw = pick(row, ["хранение", "storage", "хранениефбо"]);
+      const lastMileRaw = pick(row, ["последняямиля", "lastmile", "последняямиля₽"]);
+      const acquiringRaw = pick(row, ["эквайринг", "acquiring"]);
 
       let added = 0;
-
       if (commRaw !== undefined && commRaw !== "") {
-        const v = parseNumber(commRaw);
-        rows.push({ storeId, platform, type: "COMMISSION", category, value: v, effectiveFrom, source: "FILE" });
+        rows.push({ storeId, platform, type: "COMMISSION", category, value: parseNumber(commRaw), effectiveFrom, source: "FILE" });
         added++;
       }
       if (logRaw !== undefined && logRaw !== "") {
         const v = parseNumber(logRaw);
-        if (v > 0) {
-          rows.push({ storeId, platform, type: "LOGISTICS", category, value: v, effectiveFrom, source: "FILE" });
-          added++;
-        }
+        if (v > 0) { rows.push({ storeId, platform, type: "LOGISTICS", category, value: v, effectiveFrom, source: "FILE" }); added++; }
       }
       if (storRaw !== undefined && storRaw !== "") {
         const v = parseNumber(storRaw);
-        if (v > 0) {
-          rows.push({ storeId, platform, type: "STORAGE", category, value: v, effectiveFrom, source: "FILE" });
-          added++;
-        }
+        if (v > 0) { rows.push({ storeId, platform, type: "STORAGE", category, value: v, effectiveFrom, source: "FILE" }); added++; }
       }
       if (lastMileRaw !== undefined && lastMileRaw !== "") {
         const v = parseNumber(lastMileRaw);
-        if (v > 0) {
-          rows.push({ storeId, platform, type: "LAST_MILE", category, value: v, effectiveFrom, source: "FILE" });
-          added++;
-        }
+        if (v > 0) { rows.push({ storeId, platform, type: "LAST_MILE", category, value: v, effectiveFrom, source: "FILE" }); added++; }
       }
       if (acquiringRaw !== undefined && acquiringRaw !== "") {
         const v = parseNumber(acquiringRaw);
-        if (v > 0) {
-          rows.push({ storeId, platform, type: "ACQUIRING", category, value: v, effectiveFrom, source: "FILE" });
-          added++;
-        }
+        if (v > 0) { rows.push({ storeId, platform, type: "ACQUIRING", category, value: v, effectiveFrom, source: "FILE" }); added++; }
       }
-      if (added === 0) {
-        errors.push(`Строка ${lineNo}: нет распознанных значений`);
-      }
+      if (added === 0) errors.push(`Строка ${lineNo}: нет распознанных значений`);
     });
   } else {
     // Single-row mode: each row has explicit "type" column
     json.forEach((row, i) => {
       const lineNo = i + 2;
-      const typeRaw = String(
-        pick(row, ["type", "тип", "категория тарифа"]) ?? "",
-      ).toLowerCase();
+      const typeRaw = String(pick(row, ["type", "тип", "категория тарифа"]) ?? "").toLowerCase();
       const t = TARIFF_TYPE_MAP[normKey(typeRaw)];
       if (!t) {
         errors.push(`Строка ${lineNo}: неизвестный тип "${typeRaw}"`);
         return;
       }
-      const category = String(
-        pick(row, ["category", "категория"]) ?? "*",
-      ).trim() || "*";
+      const category = String(pick(row, ["category", "категория"]) ?? "*").trim() || "*";
       const valueRaw = pick(row, ["value", "значение", "процент", "сумма"]);
       const value = parseNumber(valueRaw);
       if (!Number.isFinite(value)) {
@@ -212,12 +261,7 @@ export async function parseTariffsFile(
       const fromRaw = pick(row, ["from", "с", "effective_from", "effectivefrom"]);
       const toRaw = pick(row, ["to", "по", "effective_to", "effectiveto"]);
       rows.push({
-        storeId,
-        platform,
-        type: t,
-        category,
-        value,
-        formula,
+        storeId, platform, type: t, category, value, formula,
         effectiveFrom: fromRaw ? parseDate(fromRaw) : effectiveFrom,
         effectiveTo: toRaw ? parseDate(toRaw) : undefined,
         source: "FILE",

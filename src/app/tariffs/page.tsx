@@ -27,28 +27,31 @@ export default function TariffsPage() {
   const [tab, setTab] = useState<Platform>("OZON");
 
   function downloadTemplate(platform: Platform) {
+    // Templates mirror the official marketplace commission table formats.
+    // Ozon: matches Таблица_категорий_для_расчёта_вознаграждения layout
     const ozonCsv = [
-      "Категория,Комиссия (%),Логистика (₽),Хранение (₽/л/сут)",
-      "Электроника,9,75,0.15",
-      "Одежда,15,65,0.12",
-      "Обувь,15,80,0.12",
-      "Красота и здоровье,28,65,0.15",
-      "Спорт,12,75,0.15",
+      "Прайс РФ (БЗ),,FBO,,,,,",
+      "Категория,Тип товара,до 100 руб.,свыше 100 до 300 руб.,свыше 300 до 1500 руб.,свыше 1500 до 5000 руб.,свыше 5000 до 15000 руб.,свыше 15000 руб.",
+      "Электроника,Смартфоны,5.00%,5.00%,5.00%,5.00%,5.00%,5.00%",
+      "Одежда и обувь,Верхняя одежда,15.00%,15.00%,15.00%,15.00%,15.00%,15.00%",
+      "Красота и здоровье,Уход за лицом,28.00%,28.00%,28.00%,28.00%,28.00%,28.00%",
+      "Спорт,Велосипеды,12.00%,12.00%,12.00%,12.00%,12.00%,12.00%",
     ].join("\n");
+    // WB: matches сomission.xlsx layout
     const wbCsv = [
-      "Предмет,Комиссия (%),Доставка (₽),Хранение (₽/л/сут)",
-      "Электроника,10,60,0.10",
-      "Одежда,20,55,0.10",
-      "Обувь,20,65,0.10",
-      "Красота,25,55,0.10",
-      "Спорт,15,60,0.10",
+      "Категория,Предмет,Склад WB %,Склад продавца - везу на склад WB %,Склад продавца - везу самостоятельно до клиента %",
+      "Авто,Авточехлы,29.50,29.50,29.50",
+      "Электроника,Смартфоны,10.00,10.00,10.00",
+      "Одежда,Платья,20.00,20.00,20.00",
+      "Обувь,Кроссовки,20.00,20.00,20.00",
+      "Красота,Уход за лицом,25.00,25.00,25.00",
     ].join("\n");
     const csv = platform === "OZON" ? ozonCsv : wbCsv;
     const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = platform === "OZON" ? "ozon_tariffs_template.csv" : "wb_tariffs_template.csv";
+    a.download = platform === "OZON" ? "ozon_commission_template.csv" : "wb_commission_template.csv";
     a.click();
     URL.revokeObjectURL(url);
   }
