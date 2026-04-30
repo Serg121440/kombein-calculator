@@ -313,6 +313,7 @@ export async function parseCostFile(file: File): Promise<{
 export type DetectedFormat =
   | "OZON_REALIZATION"
   | "OZON_PAYOUTS"
+  | "OZON_ANALYTICS"
   | "WB_SALES"
   | "WB_FINANCE"
   | "GENERIC";
@@ -324,14 +325,22 @@ function detectFormat(
   const lower = fileName.toLowerCase();
   const hset = new Set(headers.map(normKey));
 
-  // WB-specific column names in the actual downloaded Excel
+  // Ozon analytics daily report: filename "analytics_report_daily_..."
+  // Columns: "Артикул продавца", "Дата", "Заказано, шт.", "Заказано на сумму, руб.", ...
+  const isOzonAnalytics =
+    lower.includes("analytics_report") ||
+    (hset.has("заказано,шт") && hset.has("артикулпродавца")) ||
+    ([...hset].some((h) => h.includes("заказанонасумму")));
+
+  if (isOzonAnalytics) return { format: "OZON_ANALYTICS", platform: "OZON" };
+
+  // WB-specific column names — do NOT include "артикулпродавца" since Ozon also has it
   const isWb =
     lower.includes("wb") ||
     lower.includes("wildberries") ||
     hset.has("ppvzforpay") ||
     hset.has("supplieropername") ||
     hset.has("saname") ||
-    hset.has("артикулпродавца") ||
     hset.has("обоснованиедляоплаты") ||
     hset.has("кперечислениюпродавцу");
 
@@ -402,11 +411,32 @@ export async function parseReportFile(
 }> {
   const wb = await readWorkbook(file);
   const sheet = wb.Sheets[wb.SheetNames[0]];
+
+  // Check for commission/tariff table uploaded to the wrong section (2-row header)
+  const rawRows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: "" });
+  if (rawRows.length >= 2) {
+    const h0 = rawRows[0].map((c) => normKey(String(c ?? "")));
+    const h1 = rawRows[1].map((c) => normKey(String(c ?? "")));
+    const isOzonCommission = h0.some((h) => h === "fbo" || h.includes("fbo")) && h1.includes("типтовара");
+    const isWbCommission = h0.includes("предмет") && h0.some((h) => h.includes("складwb") && !h.includes("продавца"));
+    if (isOzonCommission || isWbCommission) {
+      return {
+        transactions: [],
+        errors: ["Это файл с таблицей комиссий маркетплейса. Загрузите его в раздел «Тарифы» → «Импорт XLSX/CSV»."],
+        format: "GENERIC",
+        platform: "OZON",
+      };
+    }
+  }
+
   const json = rowsFromSheet(sheet);
   const errors: string[] = [];
   const headers = json[0] ? Object.keys(json[0]) : [];
   const detection = detectFormat(headers, file.name);
 
+  if (detection.format === "OZON_ANALYTICS") {
+    return parseOzonAnalyticsReport(json, storeId, errors, detection);
+  }
   if (detection.platform === "WB") {
     return parseWbReport(json, storeId, errors, detection);
   }
@@ -432,7 +462,7 @@ function parseOzonReport(
     ).trim();
     const sku = String(
       pick(row, [
-        "sku", "артикул", "offer_id", "offerid",
+        "sku", "артикул", "артикул продавца", "offer_id", "offerid",
         "barcode", "штрихкод", "nm_id", "nmid",
       ]) ?? "",
     ).trim();
@@ -473,6 +503,68 @@ function parseOzonReport(
       type: classifyType(typeRaw, amount),
       amount,
       description,
+      rawData: row,
+      source: "upload",
+    });
+  });
+
+  return { transactions, errors, format: detection.format, platform: detection.platform };
+}
+
+// ── Ozon analytics report (analytics_report_daily_*.xlsx) ────────────────────
+// Each row = one SKU × one day with aggregate order/revenue figures.
+// No individual order IDs — we synthesise one from SKU + date.
+function parseOzonAnalyticsReport(
+  json: Record<string, unknown>[],
+  storeId: string,
+  errors: string[],
+  detection: { format: DetectedFormat; platform: Platform },
+): { transactions: Omit<Transaction, "id">[]; errors: string[]; format: DetectedFormat; platform: Platform } {
+  const transactions: Omit<Transaction, "id">[] = [];
+
+  json.forEach((row, i) => {
+    const lineNo = i + 2;
+    const sku = String(
+      pick(row, [
+        "артикул продавца", "sku", "артикул", "offer_id", "offerid",
+        "barcode", "артикул ozon",
+      ]) ?? "",
+    ).trim();
+    if (!sku) {
+      errors.push(`Строка ${lineNo}: нет артикула — пропуск`);
+      return;
+    }
+
+    const dateRaw = pick(row, ["дата", "date", "дата продажи"]);
+    const date = parseDate(dateRaw);
+
+    // "Заказано на сумму, руб." is the primary revenue figure in analytics reports
+    const amount = parseNumber(
+      pick(row, [
+        "заказано на сумму, руб.", "выкуплено на сумму, руб.",
+        "выручка, руб.", "выручка",
+        "заказано на сумму", "сумма заказов",
+      ]),
+    );
+    if (amount === 0) {
+      errors.push(`Строка ${lineNo}: нулевая сумма — пропуск`);
+      return;
+    }
+
+    const description = String(
+      pick(row, ["название товара", "наименование товара", "наименование", "name"]) ?? "",
+    );
+
+    // Synthetic orderId: SKU + date-only part so daily deduplication works
+    const datePart = date.slice(0, 10);
+    transactions.push({
+      storeId,
+      sku,
+      orderId: `${sku}-${datePart}`,
+      date,
+      type: "SALE",
+      amount,
+      description: description || `Аналитика: ${sku}`,
       rawData: row,
       source: "upload",
     });
