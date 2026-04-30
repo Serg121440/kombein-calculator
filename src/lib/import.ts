@@ -107,15 +107,21 @@ export async function parseTariffsFile(
   });
   if (rawRows.length === 0) return { rows, errors };
 
-  // Strip percent sign and parse; handles "43.00%", "29,50", 12
+  // Strip percent sign and parse; handles "43.00%", "29,50", 12, 0.43 (Excel fraction)
   function pctVal(v: unknown): number {
-    if (typeof v === "number") return v;
-    const s = String(v ?? "")
-      .replace(/\s/g, "")
-      .replace(",", ".")
-      .replace(/%$/, "");
-    const n = parseFloat(s);
-    return Number.isFinite(n) ? n : 0;
+    let n: number;
+    if (typeof v === "number") {
+      // Excel stores percentage-formatted cells as fractions: 43% → 0.43
+      n = v > 0 && v < 1 ? v * 100 : v;
+    } else {
+      const s = String(v ?? "")
+        .replace(/\s/g, "")
+        .replace(",", ".")
+        .replace(/%$/, "");
+      n = parseFloat(s);
+    }
+    if (!Number.isFinite(n)) return 0;
+    return Math.round(n * 100) / 100; // fix floating point e.g. 0.35*100 = 35.000...003
   }
 
   // Count how many cells in a row look like a percent/commission value
