@@ -26,6 +26,10 @@ export default function AccountsPage() {
   const editingStore = editingStoreId ? (stores.find((s) => s.id === editingStoreId) ?? null) : null;
   const [syncing, setSyncing] = useState<string | null>(null);
 
+  // Local draft state for Performance credentials — saved only on "Готово"
+  const [perfIdDraft, setPerfIdDraft] = useState("");
+  const [perfSecretDraft, setPerfSecretDraft] = useState("");
+
   const limit = planLimits(settings.plan).stores;
   const reachedLimit = stores.length >= limit;
 
@@ -67,6 +71,17 @@ export default function AccountsPage() {
     });
     reset();
     setOpenAdd(false);
+  }
+
+  function closeEdit() {
+    if (editingStoreId) {
+      const patch: Partial<Store> = { perfClientId: perfIdDraft.trim() || undefined };
+      if (perfSecretDraft.trim()) {
+        patch.perfClientSecretEncoded = typeof btoa !== "undefined" ? btoa(perfSecretDraft.trim()) : perfSecretDraft.trim();
+      }
+      updateStore(editingStoreId, patch);
+    }
+    setEditingStoreId(null);
   }
 
   async function handleSync(store: Store) {
@@ -182,7 +197,11 @@ export default function AccountsPage() {
                   </button>
                   <button
                     className="btn-secondary text-xs"
-                    onClick={() => setEditingStoreId(s.id)}
+                    onClick={() => {
+                      setEditingStoreId(s.id);
+                      setPerfIdDraft(s.perfClientId ?? "");
+                      setPerfSecretDraft("");
+                    }}
                   >
                     Изменить
                   </button>
@@ -324,14 +343,11 @@ export default function AccountsPage() {
 
       <Modal
         open={!!editingStore}
-        onClose={() => setEditingStoreId(null)}
+        onClose={closeEdit}
         title="Настройки магазина"
         size="sm"
         footer={
-          <button
-            className="btn-primary"
-            onClick={() => setEditingStoreId(null)}
-          >
+          <button className="btn-primary" onClick={closeEdit}>
             Готово
           </button>
         }
@@ -397,10 +413,8 @@ export default function AccountsPage() {
                   <label className="label">Performance Client-ID</label>
                   <input
                     className="input"
-                    value={editingStore.perfClientId ?? ""}
-                    onChange={(e) =>
-                      updateStore(editingStore.id, { perfClientId: e.target.value.trim() || undefined })
-                    }
+                    value={perfIdDraft}
+                    onChange={(e) => setPerfIdDraft(e.target.value)}
                     placeholder="perf-client-id"
                   />
                 </div>
@@ -409,13 +423,9 @@ export default function AccountsPage() {
                   <input
                     className="input"
                     type="password"
-                    placeholder="Введите новый секрет"
-                    onChange={(e) => {
-                      const val = e.target.value.trim();
-                      if (!val) return;
-                      const encoded = typeof btoa !== "undefined" ? btoa(val) : val;
-                      updateStore(editingStore.id, { perfClientSecretEncoded: encoded });
-                    }}
+                    value={perfSecretDraft}
+                    onChange={(e) => setPerfSecretDraft(e.target.value)}
+                    placeholder={editingStore.perfClientSecretEncoded ? "••••••••• (введите для замены)" : "Введите секрет"}
                   />
                 </div>
               </>
