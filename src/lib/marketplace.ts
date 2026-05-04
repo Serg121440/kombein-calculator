@@ -184,6 +184,42 @@ async function syncOzon(
     };
   });
 
+  // Advertising costs from Ozon Performance API — non-fatal
+  if (store.perfClientId && store.perfClientSecretEncoded) {
+    const perfSecret = decodeKey(store.perfClientSecretEncoded);
+    const now = new Date();
+    const dateFrom = new Date(now.getTime() - 30 * 86_400_000).toISOString().slice(0, 10);
+    const dateTo = now.toISOString().slice(0, 10);
+    try {
+      const advRes = await fetch("/api/ozon/advertising", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ perfClientId: store.perfClientId, perfClientSecret: perfSecret, dateFrom, dateTo }),
+      });
+      const advData = (await advRes.json().catch(() => ({}))) as {
+        stats?: Array<{ date: string; campaignId: string; campaignName: string; charge: number }>;
+        warning?: string;
+      };
+      for (const stat of advData.stats ?? []) {
+        if (stat.charge > 0) {
+          transactions.push({
+            storeId: store.id,
+            orderId: `perf-${stat.campaignId}-${stat.date}`,
+            date: new Date(stat.date).toISOString(),
+            type: "ADVERTISING",
+            amount: -stat.charge,
+            description: `Реклама: ${stat.campaignName}`,
+            source: "api",
+            externalId: `perf-${stat.campaignId}-${stat.date}`,
+          });
+        }
+      }
+      if (advData.warning) apiWarnings.push(advData.warning);
+    } catch (e) {
+      apiWarnings.push(`Реклама: ${(e as Error).message}`);
+    }
+  }
+
   const warnings = [txData.warning, ...apiWarnings].filter(Boolean);
   return {
     products: newProducts,

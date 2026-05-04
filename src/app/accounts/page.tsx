@@ -33,6 +33,8 @@ export default function AccountsPage() {
     name: "",
     apiKey: "",
     clientId: "",
+    perfClientId: "",
+    perfClientSecret: "",
   });
 
   function maskKey(key: string) {
@@ -46,7 +48,7 @@ export default function AccountsPage() {
   }
 
   function reset() {
-    setForm({ platform: "OZON", name: "", apiKey: "", clientId: "" });
+    setForm({ platform: "OZON", name: "", apiKey: "", clientId: "", perfClientId: "", perfClientSecret: "" });
   }
 
   function submit() {
@@ -58,6 +60,8 @@ export default function AccountsPage() {
       apiKeyMasked: maskKey(form.apiKey.trim()),
       apiKeyEncoded: encodeKey(form.apiKey.trim()),
       clientId: form.platform === "OZON" ? form.clientId.trim() : undefined,
+      perfClientId: form.perfClientId.trim() || undefined,
+      perfClientSecretEncoded: form.perfClientSecret.trim() ? encodeKey(form.perfClientSecret.trim()) : undefined,
       active: true,
     });
     reset();
@@ -275,17 +279,44 @@ export default function AccountsPage() {
             </p>
           </div>
           {form.platform === "OZON" && (
-            <div>
-              <label className="label">Client-ID</label>
-              <input
-                className="input"
-                value={form.clientId}
-                onChange={(e) =>
-                  setForm({ ...form, clientId: e.target.value })
-                }
-                placeholder="230622"
-              />
-            </div>
+            <>
+              <div>
+                <label className="label">Client-ID</label>
+                <input
+                  className="input"
+                  value={form.clientId}
+                  onChange={(e) => setForm({ ...form, clientId: e.target.value })}
+                  placeholder="230622"
+                />
+              </div>
+              <div className="border-t border-gray-100 pt-3">
+                <p className="text-xs text-gray-500 mb-2 font-medium">
+                  Performance API (реклама) — необязательно
+                </p>
+                <p className="text-xs text-gray-400 mb-2">
+                  Отдельные ключи из Ozon Seller → Реклама → Продвижение → API
+                </p>
+              </div>
+              <div>
+                <label className="label">Performance Client-ID</label>
+                <input
+                  className="input"
+                  value={form.perfClientId}
+                  onChange={(e) => setForm({ ...form, perfClientId: e.target.value })}
+                  placeholder="perf-client-id"
+                />
+              </div>
+              <div>
+                <label className="label">Performance Client-Secret</label>
+                <input
+                  className="input"
+                  type="password"
+                  value={form.perfClientSecret}
+                  onChange={(e) => setForm({ ...form, perfClientSecret: e.target.value })}
+                  placeholder="••••••••••"
+                />
+              </div>
+            </>
           )}
         </div>
       </Modal>

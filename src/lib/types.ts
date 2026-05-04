@@ -14,6 +14,10 @@ export interface Store {
   lastSyncAt?: string;
   /** WB-only: last cursor for incremental card sync { updatedAt, nmID } */
   wbCardsCursor?: { updatedAt: string; nmID: number };
+  /** Ozon Performance API (advertising): client_id from Реклама → API */
+  perfClientId?: string;
+  /** Ozon Performance API: base64-obfuscated client_secret */
+  perfClientSecretEncoded?: string;
   createdAt: string;
 }
 
