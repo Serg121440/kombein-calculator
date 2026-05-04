@@ -50,8 +50,14 @@ export interface Tariff {
   category: string;
   /** Percent for COMMISSION/ACQUIRING, RUB for LOGISTICS/LAST_MILE, RUB/L/day for STORAGE */
   value: number;
-  /** Optional formula description, used when LOGISTICS depends on weight/volume */
+  /** Optional formula: "weight" → value×kg, "volume" → value×L, omit → flat fee */
   formula?: string;
+  /** LOGISTICS tier: lower bound in rangeUnit (inclusive) */
+  rangeMin?: number;
+  /** LOGISTICS tier: upper bound in rangeUnit (exclusive). Omit = no upper limit */
+  rangeMax?: number;
+  /** Unit for range bounds. Default "L" (litres of volume) */
+  rangeUnit?: "kg" | "L";
   effectiveFrom: string;
   effectiveTo?: string;
   source: TariffSource;

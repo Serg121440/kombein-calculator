@@ -53,6 +53,48 @@ export function productVolumeLiters(p: Product): number {
   return (p.lengthCm * p.widthCm * p.heightCm) / 1000;
 }
 
+// ─── Logistics: range-aware tariff lookup ─────────────────────────────────────
+// Ozon/WB logistics tariffs are weight- or volume-tiered, not category-based.
+// When ranged tariffs exist for a store, match by product dimensions.
+// Fall back to category-based match for flat/formula tariffs.
+
+function findLogisticsTariff(
+  tariffs: Tariff[],
+  product: Product,
+  date: string,
+): Tariff | undefined {
+  const weight = Math.max(0.1, product.weightKg);
+  const volume = productVolumeLiters(product);
+
+  const ranged = tariffs.filter(
+    (t) =>
+      t.storeId === product.storeId &&
+      t.type === "LOGISTICS" &&
+      isActiveOn(t, date) &&
+      t.rangeMin !== undefined,
+  );
+
+  if (ranged.length > 0) {
+    // Sort tiers by rangeMin so first match wins for overlapping tiers
+    ranged.sort((a, b) => (a.rangeMin ?? 0) - (b.rangeMin ?? 0));
+    const match = ranged.find((t) => {
+      const val = t.rangeUnit === "kg" ? weight : volume;
+      return val >= (t.rangeMin ?? 0) && val < (t.rangeMax ?? Infinity);
+    });
+    if (match) return match;
+  }
+
+  // Fall back to category/wildcard-based match
+  return findTariff(tariffs, product.storeId, "LOGISTICS", product.category || "*", date);
+}
+
+function applyLogisticsTariff(t: Tariff, product: Product): number {
+  const formula = t.formula?.toLowerCase() ?? "";
+  if (formula.includes("weight")) return t.value * Math.max(0.1, product.weightKg);
+  if (formula.includes("volume")) return t.value * productVolumeLiters(product);
+  return t.value; // flat fee (tiered tariff already selected the right tier)
+}
+
 // ─── Model 1: Planned unit economics ─────────────────────────────────────────
 
 export function calculatePlan(
@@ -66,23 +108,13 @@ export function calculatePlan(
 
   const commissionTariff = findTariff(tariffs, product.storeId, "COMMISSION", cat, date);
   const acquiringTariff = findTariff(tariffs, product.storeId, "ACQUIRING", cat, date);
-  const logisticsTariff = findTariff(tariffs, product.storeId, "LOGISTICS", cat, date);
+  const logisticsTariff = findLogisticsTariff(tariffs, product, date);
   const storageTariff = findTariff(tariffs, product.storeId, "STORAGE", cat, date);
   const lastMileTariff = findTariff(tariffs, product.storeId, "LAST_MILE", cat, date);
 
   const commission = commissionTariff ? (revenue * commissionTariff.value) / 100 : 0;
   const acquiring = acquiringTariff ? (revenue * acquiringTariff.value) / 100 : 0;
-
-  let logistics = 0;
-  if (logisticsTariff) {
-    if (logisticsTariff.formula?.toLowerCase().includes("weight")) {
-      logistics = logisticsTariff.value * Math.max(0.1, product.weightKg);
-    } else if (logisticsTariff.formula?.toLowerCase().includes("volume")) {
-      logistics = logisticsTariff.value * productVolumeLiters(product);
-    } else {
-      logistics = logisticsTariff.value;
-    }
-  }
+  const logistics = logisticsTariff ? applyLogisticsTariff(logisticsTariff, product) : 0;
 
   const liters = productVolumeLiters(product);
   const storage = storageTariff ? liters * storageTariff.value * ctx.storageDays : 0;

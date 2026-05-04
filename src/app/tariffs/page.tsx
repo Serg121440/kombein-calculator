@@ -63,6 +63,9 @@ export default function TariffsPage() {
     category: "*",
     value: 0,
     formula: "",
+    rangeMin: "" as "" | number,
+    rangeMax: "" as "" | number,
+    rangeUnit: "L" as "kg" | "L",
     effectiveFrom: new Date().toISOString().slice(0, 10),
     effectiveTo: "",
   });
@@ -92,6 +95,9 @@ export default function TariffsPage() {
       category: "*",
       value: 0,
       formula: "",
+      rangeMin: "",
+      rangeMax: "",
+      rangeUnit: "L",
       effectiveFrom: new Date().toISOString().slice(0, 10),
       effectiveTo: "",
     });
@@ -105,6 +111,9 @@ export default function TariffsPage() {
       category: t.category || "*",
       value: t.value,
       formula: t.formula ?? "",
+      rangeMin: t.rangeMin ?? "",
+      rangeMax: t.rangeMax ?? "",
+      rangeUnit: t.rangeUnit ?? "L",
       effectiveFrom: t.effectiveFrom.slice(0, 10),
       effectiveTo: t.effectiveTo?.slice(0, 10) ?? "",
     });
@@ -122,6 +131,9 @@ export default function TariffsPage() {
       category: form.category || "*",
       value: form.value,
       formula: form.formula || undefined,
+      rangeMin: form.type === "LOGISTICS" && form.rangeMin !== "" ? Number(form.rangeMin) : undefined,
+      rangeMax: form.type === "LOGISTICS" && form.rangeMax !== "" ? Number(form.rangeMax) : undefined,
+      rangeUnit: form.type === "LOGISTICS" && form.rangeMin !== "" ? form.rangeUnit : undefined,
       effectiveFrom: new Date(form.effectiveFrom).toISOString(),
       effectiveTo: form.effectiveTo
         ? new Date(form.effectiveTo).toISOString()
@@ -216,9 +228,8 @@ export default function TariffsPage() {
               <tr>
                 <th>Магазин</th>
                 <th>Тип</th>
-                <th>Категория</th>
+                <th>Категория / Диапазон</th>
                 <th className="text-right">Значение</th>
-                <th>Формула</th>
                 <th>Период</th>
                 <th>Источник</th>
                 <th className="text-right">Действия</th>
@@ -227,15 +238,22 @@ export default function TariffsPage() {
             <tbody className="divide-y divide-gray-100">
               {visibleTariffs.map((t) => {
                 const store = stores.find((s) => s.id === t.storeId);
+                const rangeLabel =
+                  t.rangeMin !== undefined
+                    ? `${t.rangeMin}–${t.rangeMax !== undefined ? t.rangeMax : "∞"} ${t.rangeUnit ?? "L"}`
+                    : null;
                 return (
                   <tr key={t.id}>
                     <td>{store?.name ?? "—"}</td>
                     <td>{TYPE_LABEL[t.type]}</td>
-                    <td>{t.category || "*"}</td>
-                    <td className="text-right font-mono">{t.value}</td>
-                    <td className="text-xs text-gray-500">
-                      {t.formula ?? "—"}
+                    <td>
+                      {rangeLabel ? (
+                        <span className="font-mono text-xs">{rangeLabel}</span>
+                      ) : (
+                        t.category || "*"
+                      )}
                     </td>
+                    <td className="text-right font-mono">{t.value}</td>
                     <td>
                       {formatDate(t.effectiveFrom)}
                       {t.effectiveTo
@@ -339,19 +357,59 @@ export default function TariffsPage() {
             </p>
           </div>
           {form.type === "LOGISTICS" && (
-            <div>
-              <label className="label">
-                Формула (напр. weight, volume или пусто)
-              </label>
-              <input
-                className="input"
-                value={form.formula}
-                onChange={(e) =>
-                  setForm({ ...form, formula: e.target.value })
-                }
-                placeholder="weight"
-              />
-            </div>
+            <>
+              <div className="card p-3 bg-blue-50 border-blue-200 text-blue-800 text-xs">
+                <strong>Диапазон (для тиерных тарифов)</strong> — задайте от/до по объёму (л) или весу (кг).
+                Система выберет тариф, в диапазон которого попадает товар.
+                Без диапазона — плоская ставка или формульная.
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <label className="label">Ед. диапазона</label>
+                  <select
+                    className="input"
+                    value={form.rangeUnit}
+                    onChange={(e) => setForm({ ...form, rangeUnit: e.target.value as "kg" | "L" })}
+                  >
+                    <option value="L">Объём (л)</option>
+                    <option value="kg">Вес (кг)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="label">От</label>
+                  <input
+                    className="input"
+                    type="number"
+                    min={0}
+                    step={0.1}
+                    placeholder="0"
+                    value={form.rangeMin}
+                    onChange={(e) => setForm({ ...form, rangeMin: e.target.value === "" ? "" : parseFloat(e.target.value) })}
+                  />
+                </div>
+                <div>
+                  <label className="label">До (не вкл.)</label>
+                  <input
+                    className="input"
+                    type="number"
+                    min={0}
+                    step={0.1}
+                    placeholder="∞"
+                    value={form.rangeMax}
+                    onChange={(e) => setForm({ ...form, rangeMax: e.target.value === "" ? "" : parseFloat(e.target.value) })}
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="label">Формула (если нет диапазона: weight, volume)</label>
+                <input
+                  className="input"
+                  value={form.formula}
+                  onChange={(e) => setForm({ ...form, formula: e.target.value })}
+                  placeholder="weight или volume"
+                />
+              </div>
+            </>
           )}
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -425,26 +483,28 @@ export default function TariffsPage() {
                 <thead>
                   <tr>
                     <th>Тип</th>
-                    <th>Категория</th>
+                    <th>Категория / Диапазон</th>
                     <th className="text-right">Значение</th>
-                    <th>Формула</th>
                     <th>С</th>
                     <th>По</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {importPreview.rows.slice(0, 50).map((r, i) => (
+                  {importPreview.rows.slice(0, 50).map((r, i) => {
+                    const rLabel = r.rangeMin !== undefined
+                      ? `${r.rangeMin}–${r.rangeMax !== undefined ? r.rangeMax : "∞"} ${r.rangeUnit ?? "L"}`
+                      : null;
+                    return (
                     <tr key={i}>
                       <td>{TYPE_LABEL[r.type]}</td>
-                      <td>{r.category}</td>
+                      <td>{rLabel ? <span className="font-mono text-xs">{rLabel}</span> : r.category}</td>
                       <td className="text-right font-mono">{r.value}</td>
-                      <td className="text-xs">{r.formula ?? "—"}</td>
                       <td>{formatDate(r.effectiveFrom)}</td>
                       <td>
                         {r.effectiveTo ? formatDate(r.effectiveTo) : "—"}
                       </td>
                     </tr>
-                  ))}
+                  );})}
                 </tbody>
               </table>
             </div>
