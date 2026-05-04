@@ -90,13 +90,27 @@ interface Campaign {
 }
 
 async function fetchCampaigns(token: string): Promise<Campaign[]> {
-  const res = await apiFetch(
-    `${PERF_BASE}/api/client/campaign`,
-    { method: "GET", headers: perfHdrs(token) },
-    { label: "ozon-perf:campaigns" },
-  );
-  const data = await parseJson<{ list?: Campaign[]; campaigns?: Campaign[]; items?: Campaign[] }>(res);
-  return data.list ?? data.campaigns ?? data.items ?? [];
+  const paths = [
+    "/api/client/campaign",
+    "/api/client/campaigns",
+    "/api/client/campaign/list",
+  ];
+  for (const path of paths) {
+    try {
+      const res = await apiFetch(
+        `${PERF_BASE}${path}`,
+        { method: "GET", headers: perfHdrs(token) },
+        { label: `ozon-perf:campaign${path}`, maxRetries: 0 },
+      );
+      if (!res.ok) continue;
+      const data = await res.json() as { list?: Campaign[]; campaigns?: Campaign[]; items?: Campaign[] };
+      const list = data.list ?? data.campaigns ?? data.items ?? [];
+      if (Array.isArray(list)) return list;
+    } catch {
+      continue;
+    }
+  }
+  return [];
 }
 
 // ─── Statistics: try multiple endpoint variants ───────────────────────────────
@@ -249,19 +263,15 @@ export async function fetchAdvertisingStats(
   const token = await fetchToken(clientId, clientSecret);
   const campaigns = await fetchCampaigns(token);
 
-  if (campaigns.length === 0) {
-    return { stats: [], warning: "Нет рекламных кампаний в аккаунте Performance" };
-  }
-
+  // Even with 0 campaigns (endpoint 404 or empty account), try fetching stats —
+  // some statistics endpoints don't require campaign IDs.
   const activeCampaignIds = campaigns
     .filter((c) => c.state !== "ARCHIVED" && c.state !== "STOPPED")
     .map((c) => c.id);
-
   const campaignIds = activeCampaignIds.length > 0 ? activeCampaignIds : campaigns.map((c) => c.id);
 
   const result = await fetchStats(token, campaignIds, dateFrom, dateTo);
 
-  // Enrich campaignName
   const nameMap = new Map(campaigns.map((c) => [c.id, c.title]));
   for (const s of result.stats) {
     s.campaignName = nameMap.get(s.campaignId) ?? s.campaignId;
