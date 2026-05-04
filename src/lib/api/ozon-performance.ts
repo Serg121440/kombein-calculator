@@ -13,17 +13,32 @@ const PERF_BASE = "https://performance.ozon.ru";
 
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 
-async function tokenPost(url: string, body: string): Promise<Response> {
+async function tokenPost(url: string, body: string, cookieJar: string[]): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 30_000);
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Accept: "application/json",
+    "User-Agent": "Mozilla/5.0 (compatible; kombein-calculator/1.0)",
+  };
+  if (cookieJar.length > 0) {
+    headers["Cookie"] = cookieJar.join("; ");
+  }
   try {
-    return await fetch(url, {
+    const res = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body,
       redirect: "manual",
       signal: controller.signal,
     });
+    // Capture Set-Cookie from response and add to jar
+    const setCookies = (res.headers as Headers & { getSetCookie?: () => string[] }).getSetCookie?.() ?? [];
+    for (const sc of setCookies) {
+      const kv = sc.split(";")[0];
+      if (kv && !cookieJar.includes(kv)) cookieJar.push(kv);
+    }
+    return res;
   } finally {
     clearTimeout(timer);
   }
@@ -31,26 +46,26 @@ async function tokenPost(url: string, body: string): Promise<Response> {
 
 async function fetchToken(clientId: string, clientSecret: string): Promise<string> {
   const body = JSON.stringify({ client_id: clientId, client_secret: clientSecret, grant_type: "client_credentials" });
+  const cookieJar: string[] = [];
   let url = `${PERF_BASE}/api/client/token`;
-  let res = await tokenPost(url, body);
+  let res = await tokenPost(url, body, cookieJar);
 
-  // Ozon may chain several same-host redirects (302 → 307 with ?__rr markers).
-  // Follow up to 5 same-host redirects, then give up to avoid infinite loops.
-  for (let i = 0; i < 5 && res.status >= 300 && res.status < 400; i++) {
+  // Ozon's anti-bot protection chains 302 → 307 with ?__rr counters.
+  // Send back any cookies it sets so subsequent hops can satisfy the check.
+  for (let i = 0; i < 8 && res.status >= 300 && res.status < 400; i++) {
     const location = res.headers.get("location") ?? "";
     const next = location.startsWith("http") ? location : `${PERF_BASE}${location}`;
     if (!next.startsWith(PERF_BASE)) {
       throw new Error(`Токен-эндпоинт редиректит за пределы домена: ${location}`);
     }
-    if (next === url) {
-      throw new Error(`Бесконечный редирект на ${url}`);
-    }
     url = next;
-    res = await tokenPost(url, body);
+    res = await tokenPost(url, body, cookieJar);
   }
 
   if (res.status >= 300 && res.status < 400) {
-    throw new Error(`Слишком много редиректов токен-эндпоинта (последний → ${res.headers.get("location") ?? "?"})`);
+    throw new Error(
+      `Слишком много редиректов токен-эндпоинта (последний → ${res.headers.get("location") ?? "?"}, cookies=${cookieJar.length}). Vercel/прокси не пропускает к Performance API.`,
+    );
   }
 
   const data = await parseJson<{ access_token: string }>(res);
