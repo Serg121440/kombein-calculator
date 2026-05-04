@@ -14,19 +14,27 @@ const PERF_BASE = "https://performance.ozon.ru";
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 
 async function fetchToken(clientId: string, clientSecret: string): Promise<string> {
-  const res = await apiFetch(
-    `${PERF_BASE}/api/client/token`,
-    {
+  // Use redirect:"manual" so we can report the actual redirect target instead of looping
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 30_000);
+  let res: Response;
+  try {
+    res = await fetch(`${PERF_BASE}/api/client/token`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        client_id: clientId,
-        client_secret: clientSecret,
-        grant_type: "client_credentials",
-      }),
-    },
-    { label: "ozon-perf:token", maxRetries: 1 },
-  );
+      body: JSON.stringify({ client_id: clientId, client_secret: clientSecret, grant_type: "client_credentials" }),
+      redirect: "manual",
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+
+  if (res.status >= 300 && res.status < 400) {
+    const location = res.headers.get("location") ?? "(нет Location)";
+    throw new Error(`Токен-эндпоинт редиректит на: ${location} — возможно, неверный домен или истёк SSL`);
+  }
+
   const data = await parseJson<{ access_token: string }>(res);
   if (!data.access_token) throw new Error("Нет access_token в ответе Performance API");
   return data.access_token;
