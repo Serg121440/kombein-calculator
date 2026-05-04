@@ -53,6 +53,10 @@ interface InfoItem {
   weight_unit?: string;
   type_id?: number;
   description_category_id?: number;
+  /** Selling price returned directly in product/info/list response */
+  price?: string;
+  min_price?: string;
+  old_price?: string;
 }
 
 interface CategoryTreeNode {
@@ -307,28 +311,24 @@ export async function fetchAllProducts(
 
   // Info, prices and category tree fetched in parallel. All best-effort.
   const [infoItems, priceItems, typeNameMap] = await Promise.all([
-    // Request info by offer_id (артикул продавца) — more reliably matched in response
     fetchProductInfo(apiKey, clientId, listItems).catch((e: Error) => {
       warnings.push(`Названия/габариты недоступны: ${e.message}`);
       return [] as InfoItem[];
     }),
-    fetchProductPrices(apiKey, clientId).catch((e: Error) => {
-      warnings.push(`Цены недоступны: ${e.message}`);
-      return [] as PriceItem[];
-    }),
+    // /v4/product/info/prices is optional — prices also embedded in info response
+    fetchProductPrices(apiKey, clientId).catch(() => [] as PriceItem[]),
     fetchTypeNameMap(apiKey, clientId),
   ]);
 
-  // Map info by offer_id (matches ListItem.offer_id) AND by id (product_id fallback)
+  // Map info by offer_id AND id fallback
   const infoByOfferId = new Map(infoItems.map((i) => [i.offer_id, i]));
   const infoById = new Map(infoItems.map((i) => [i.id, i]));
   const priceMap = new Map(priceItems.map((i) => [i.product_id, i]));
 
   const products = listItems.map((li) => {
     const info = infoByOfferId.get(li.offer_id) ?? infoById.get(li.product_id);
-    const price = priceMap.get(li.product_id);
+    const priceItem = priceMap.get(li.product_id);
 
-    // Ozon returns dimensions in mm and weight in g
     const dimUnit = info?.dimension_unit ?? "mm";
     const weightUnit = info?.weight_unit ?? "g";
     const dimF = dimUnit === "mm" ? 0.1 : 1;
@@ -337,12 +337,22 @@ export async function fetchAllProducts(
     const typeId = info?.type_id;
     const typeName = typeId ? (typeNameMap.get(typeId) ?? "") : "";
 
+    // Price: prefer dedicated prices API, fall back to price embedded in info response
+    const sellingPrice =
+      parseFloat(priceItem?.price?.price ?? "0") ||
+      parseFloat(info?.price ?? "0") ||
+      0;
+    const minPrice =
+      parseFloat(priceItem?.price?.min_price ?? "0") ||
+      parseFloat(info?.min_price ?? "0") ||
+      0;
+
     return {
       product_id: li.product_id,
       offer_id: li.offer_id,
       name: info?.name ?? li.offer_id,
-      selling_price: parseFloat(price?.price?.price ?? "0") || 0,
-      min_price: parseFloat(price?.price?.min_price ?? "0") || 0,
+      selling_price: sellingPrice,
+      min_price: minPrice,
       depth_cm: (info?.depth ?? 0) * dimF,
       width_cm: (info?.width ?? 0) * dimF,
       height_cm: (info?.height ?? 0) * dimF,
