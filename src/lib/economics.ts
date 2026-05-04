@@ -337,6 +337,20 @@ export function totalsByStore(
 ) {
   const storeProducts = products.filter((p) => p.storeId === store.id);
   const facts = storeProducts.map((p) => calculateFact(p, transactions, period));
+
+  // Advertising transactions from Performance API have no productId/sku,
+  // so they are invisible to calculateFact. Sum them directly at store level.
+  const storeLevelAds = transactions
+    .filter(
+      (t) =>
+        t.storeId === store.id &&
+        t.type === "ADVERTISING" &&
+        !t.productId &&
+        !t.sku &&
+        inPeriod(t.date, period),
+    )
+    .reduce((sum, t) => sum + Math.abs(t.amount), 0);
+
   const totals = facts.reduce(
     (acc, f) => {
       acc.revenue += f.revenue;
@@ -358,7 +372,7 @@ export function totalsByStore(
       commission: 0,
       logistics: 0,
       storage: 0,
-      advertising: 0,
+      advertising: storeLevelAds,
       penalties: 0,
       refunds: 0,
       others: 0,
@@ -368,6 +382,10 @@ export function totalsByStore(
       unitsRedeemed: 0,
     },
   );
+
+  // Subtract store-level advertising from grossProfit
+  totals.grossProfit -= storeLevelAds;
+
   const marginPct =
     totals.revenue > 0 ? (totals.grossProfit / totals.revenue) * 100 : 0;
   return { ...totals, marginPct, products: storeProducts.length };
