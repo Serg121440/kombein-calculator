@@ -204,6 +204,7 @@ async function syncOzon(
       if (advData.error) {
         apiWarnings.push(`Реклама Performance API: ${advData.error}`);
       } else {
+        let advCount = 0;
         for (const stat of advData.stats ?? []) {
           if (stat.charge > 0) {
             transactions.push({
@@ -216,9 +217,11 @@ async function syncOzon(
               source: "api",
               externalId: `perf-${stat.campaignId}-${stat.date}`,
             });
+            advCount++;
           }
         }
         if (advData.warning) apiWarnings.push(advData.warning);
+        else if (advCount === 0) apiWarnings.push("Performance API: расходов за последние 30 дней не найдено");
       }
     } catch (e) {
       apiWarnings.push(`Реклама: ${(e as Error).message}`);

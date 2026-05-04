@@ -22,7 +22,8 @@ export default function AccountsPage() {
   const { success, error: toastError, warn } = useToast();
 
   const [openAdd, setOpenAdd] = useState(false);
-  const [editingStore, setEditingStore] = useState<Store | null>(null);
+  const [editingStoreId, setEditingStoreId] = useState<string | null>(null);
+  const editingStore = editingStoreId ? (stores.find((s) => s.id === editingStoreId) ?? null) : null;
   const [syncing, setSyncing] = useState<string | null>(null);
 
   const limit = planLimits(settings.plan).stores;
@@ -181,7 +182,7 @@ export default function AccountsPage() {
                   </button>
                   <button
                     className="btn-secondary text-xs"
-                    onClick={() => setEditingStore(s)}
+                    onClick={() => setEditingStoreId(s.id)}
                   >
                     Изменить
                   </button>
@@ -323,13 +324,13 @@ export default function AccountsPage() {
 
       <Modal
         open={!!editingStore}
-        onClose={() => setEditingStore(null)}
+        onClose={() => setEditingStoreId(null)}
         title="Настройки магазина"
         size="sm"
         footer={
           <button
             className="btn-primary"
-            onClick={() => setEditingStore(null)}
+            onClick={() => setEditingStoreId(null)}
           >
             Готово
           </button>
