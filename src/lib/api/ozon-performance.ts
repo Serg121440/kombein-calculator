@@ -31,16 +31,26 @@ async function tokenPost(url: string, body: string): Promise<Response> {
 
 async function fetchToken(clientId: string, clientSecret: string): Promise<string> {
   const body = JSON.stringify({ client_id: clientId, client_secret: clientSecret, grant_type: "client_credentials" });
-  let res = await tokenPost(`${PERF_BASE}/api/client/token`, body);
+  let url = `${PERF_BASE}/api/client/token`;
+  let res = await tokenPost(url, body);
 
-  // Follow a single same-host redirect (Ozon adds ?__rr=1 on first request)
-  if (res.status >= 300 && res.status < 400) {
+  // Ozon may chain several same-host redirects (302 → 307 with ?__rr markers).
+  // Follow up to 5 same-host redirects, then give up to avoid infinite loops.
+  for (let i = 0; i < 5 && res.status >= 300 && res.status < 400; i++) {
     const location = res.headers.get("location") ?? "";
-    if (location && location.startsWith(PERF_BASE)) {
-      res = await tokenPost(location, body);
-    } else {
-      throw new Error(`Токен-эндпоинт редиректит за пределы домена: ${location || "(нет Location)"}`);
+    const next = location.startsWith("http") ? location : `${PERF_BASE}${location}`;
+    if (!next.startsWith(PERF_BASE)) {
+      throw new Error(`Токен-эндпоинт редиректит за пределы домена: ${location}`);
     }
+    if (next === url) {
+      throw new Error(`Бесконечный редирект на ${url}`);
+    }
+    url = next;
+    res = await tokenPost(url, body);
+  }
+
+  if (res.status >= 300 && res.status < 400) {
+    throw new Error(`Слишком много редиректов токен-эндпоинта (последний → ${res.headers.get("location") ?? "?"})`);
   }
 
   const data = await parseJson<{ access_token: string }>(res);
