@@ -26,8 +26,10 @@ export async function POST(req: NextRequest) {
     const result = await fetchAdvertisingStats(perfClientId, perfClientSecret, from, to);
     return NextResponse.json(result);
   } catch (err) {
-    const msg = (err as Error).message;
-    console.error("[ozon/advertising] error:", msg);
+    const e = err as Error & { cause?: unknown };
+    const causeMsg = (e.cause as Error | undefined)?.message ?? "";
+    const msg = e.message + (causeMsg && !e.message.includes(causeMsg) ? ` (${causeMsg})` : "");
+    console.error("[ozon/advertising] error:", msg, e.cause ?? "");
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

@@ -75,10 +75,12 @@ export async function apiFetch(
       }
       if (attempt < maxRetries) {
         const backoffMs = 2 ** attempt * 1_000;
-        console.warn(`[api] ${label} → network error, retrying in ${backoffMs}ms: ${e.message}`);
+        const cause = (e as NodeJS.ErrnoException).code ?? (e.cause as Error | undefined)?.message ?? "";
+        console.warn(`[api] ${label} → network error, retrying in ${backoffMs}ms: ${e.message}${cause ? ` (${cause})` : ""}`);
         await sleep(backoffMs);
       } else {
-        throw e;
+        const cause = (e as NodeJS.ErrnoException).code ?? (e.cause as Error | undefined)?.message ?? "";
+        throw new Error(`[api] ${label} fetch failed${cause ? `: ${cause}` : ""}`, { cause: e });
       }
     }
   }
