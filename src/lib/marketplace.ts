@@ -199,22 +199,27 @@ async function syncOzon(
       const advData = (await advRes.json().catch(() => ({}))) as {
         stats?: Array<{ date: string; campaignId: string; campaignName: string; charge: number }>;
         warning?: string;
+        error?: string;
       };
-      for (const stat of advData.stats ?? []) {
-        if (stat.charge > 0) {
-          transactions.push({
-            storeId: store.id,
-            orderId: `perf-${stat.campaignId}-${stat.date}`,
-            date: new Date(stat.date).toISOString(),
-            type: "ADVERTISING",
-            amount: -stat.charge,
-            description: `Реклама: ${stat.campaignName}`,
-            source: "api",
-            externalId: `perf-${stat.campaignId}-${stat.date}`,
-          });
+      if (advData.error) {
+        apiWarnings.push(`Реклама Performance API: ${advData.error}`);
+      } else {
+        for (const stat of advData.stats ?? []) {
+          if (stat.charge > 0) {
+            transactions.push({
+              storeId: store.id,
+              orderId: `perf-${stat.campaignId}-${stat.date}`,
+              date: new Date(stat.date).toISOString(),
+              type: "ADVERTISING",
+              amount: -stat.charge,
+              description: `Реклама: ${stat.campaignName}`,
+              source: "api",
+              externalId: `perf-${stat.campaignId}-${stat.date}`,
+            });
+          }
         }
+        if (advData.warning) apiWarnings.push(advData.warning);
       }
-      if (advData.warning) apiWarnings.push(advData.warning);
     } catch (e) {
       apiWarnings.push(`Реклама: ${(e as Error).message}`);
     }
