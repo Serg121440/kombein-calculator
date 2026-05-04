@@ -72,7 +72,12 @@ interface OzonOperation {
 async function syncOzon(
   store: Store,
   existingProducts: Product[],
-): Promise<{ products: Omit<Product, "id" | "createdAt">[]; transactions: Omit<Transaction, "id">[]; warning?: string }> {
+): Promise<{
+  products: Omit<Product, "id" | "createdAt">[];
+  productUpdates: Array<{ id: string; patch: Partial<Product> }>;
+  transactions: Omit<Transaction, "id">[];
+  warning?: string;
+}> {
   const apiKey = decodeKey(store.apiKeyEncoded!);
   const clientId = store.clientId!;
 
@@ -86,26 +91,49 @@ async function syncOzon(
     const err = await prodRes.json().catch(() => ({ error: prodRes.statusText }));
     throw new Error(err.error ?? "Ошибка получения товаров Ozon");
   }
-  const prodData = (await prodRes.json()) as { products: OzonProductInfo[] };
-  const existingSkus = new Set(
-    existingProducts.filter((p) => p.storeId === store.id).map((p) => p.sku),
-  );
+  const prodData = (await prodRes.json()) as { products: OzonProductInfo[]; warnings?: string[] };
+  const apiWarnings = prodData.warnings ?? [];
+
+  const storeProducts = existingProducts.filter((p) => p.storeId === store.id);
+  const existingBySkus = new Map(storeProducts.map((p) => [p.sku, p]));
   const allOzonProducts = prodData.products ?? [];
-  const newProducts: Omit<Product, "id" | "createdAt">[] = allOzonProducts
-    .filter((p) => !existingSkus.has(String(p.offer_id)))
-    .map((p) => ({
-      storeId: store.id,
-      sku: String(p.offer_id),
-      name: p.name ?? `Товар ${p.product_id}`,
-      category: p.type_name,
-      purchasePrice: 0,
-      sellingPrice: p.selling_price,
-      weightKg: p.weight_kg,
-      lengthCm: p.depth_cm,
-      widthCm: p.width_cm,
-      heightCm: p.height_cm,
-      active: true,
-    }));
+
+  const newProducts: Omit<Product, "id" | "createdAt">[] = [];
+  const productUpdates: Array<{ id: string; patch: Partial<Product> }> = [];
+
+  for (const p of allOzonProducts) {
+    const offerId = String(p.offer_id);
+    const existing = existingBySkus.get(offerId);
+    const hasRealName = p.name && p.name !== offerId;
+
+    if (!existing) {
+      newProducts.push({
+        storeId: store.id,
+        sku: offerId,
+        name: p.name ?? `Товар ${p.product_id}`,
+        category: p.type_name,
+        purchasePrice: 0,
+        sellingPrice: p.selling_price,
+        weightKg: p.weight_kg,
+        lengthCm: p.depth_cm,
+        widthCm: p.width_cm,
+        heightCm: p.height_cm,
+        active: true,
+      });
+    } else {
+      // Refresh name, price, category, dimensions from API — but never overwrite
+      // user-entered purchasePrice or active flag.
+      const patch: Partial<Product> = {};
+      if (hasRealName) patch.name = p.name;
+      if (p.selling_price > 0) patch.sellingPrice = p.selling_price;
+      if (p.type_name) patch.category = p.type_name;
+      if (p.weight_kg > 0) patch.weightKg = p.weight_kg;
+      if (p.depth_cm > 0) patch.lengthCm = p.depth_cm;
+      if (p.width_cm > 0) patch.widthCm = p.width_cm;
+      if (p.height_cm > 0) patch.heightCm = p.height_cm;
+      if (Object.keys(patch).length > 0) productUpdates.push({ id: existing.id, patch });
+    }
+  }
 
   // Ozon finance API uses numeric listing SKU (fbo_sku/fbs_sku), not offer_id.
   // Build numeric_listing_sku → offer_id so we can link transactions to products.
@@ -156,7 +184,13 @@ async function syncOzon(
     };
   });
 
-  return { products: newProducts, transactions, warning: txData.warning };
+  const warnings = [txData.warning, ...apiWarnings].filter(Boolean);
+  return {
+    products: newProducts,
+    productUpdates,
+    transactions,
+    warning: warnings.length > 0 ? warnings.join(" | ") : undefined,
+  };
 }
 
 // ─── Wildberries ──────────────────────────────────────────────────────────────
@@ -204,7 +238,7 @@ function classifyWbRow(row: WbRow): TransactionType {
 async function syncWb(
   store: Store,
   existingProducts: Product[],
-): Promise<{ products: Omit<Product, "id" | "createdAt">[]; transactions: Omit<Transaction, "id">[]; warning?: string; nextWbCursor?: { updatedAt: string; nmID: number } }> {
+): Promise<{ products: Omit<Product, "id" | "createdAt">[]; productUpdates: Array<{ id: string; patch: Partial<Product> }>; transactions: Omit<Transaction, "id">[]; warning?: string; nextWbCursor?: { updatedAt: string; nmID: number } }> {
   const apiKey = decodeKey(store.apiKeyEncoded!);
 
   // Products — pass previous cursor for incremental sync
@@ -318,6 +352,7 @@ async function syncWb(
 
   return {
     products: newProducts,
+    productUpdates: [],
     transactions,
     warning: txData.warning,
     nextWbCursor: prodData.nextCursor,
@@ -331,6 +366,7 @@ export async function syncStore(
   existingProducts: Product[],
 ): Promise<{
   products: Omit<Product, "id" | "createdAt">[];
+  productUpdates: Array<{ id: string; patch: Partial<Product> }>;
   transactions: Omit<Transaction, "id">[];
   warning?: string;
   /** WB only: save to store.wbCardsCursor for next incremental sync */

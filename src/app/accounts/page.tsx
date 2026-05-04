@@ -16,6 +16,7 @@ export default function AccountsPage() {
   const updateStore = useAppStore((s) => s.updateStore);
   const removeStore = useAppStore((s) => s.removeStore);
   const bulkAddProducts = useAppStore((s) => s.bulkAddProducts);
+  const updateProduct = useAppStore((s) => s.updateProduct);
   const addTransactions = useAppStore((s) => s.addTransactions);
   const products = useAppStore((s) => s.products);
   const { success, error: toastError, warn } = useToast();
@@ -73,14 +74,18 @@ export default function AccountsPage() {
       const result = await syncStore(store, products);
       let txResult = { inserted: 0, skipped: 0, updated: 0 };
       if (result.products.length > 0) bulkAddProducts(result.products);
+      if (result.productUpdates.length > 0) {
+        for (const { id, patch } of result.productUpdates) updateProduct(id, patch);
+      }
       if (result.transactions.length > 0) txResult = addTransactions(result.transactions);
       updateStore(store.id, {
         lastSyncAt: new Date().toISOString(),
         ...(result.nextWbCursor ? { wbCardsCursor: result.nextWbCursor } : {}),
       });
       const parts: string[] = [];
-      if (result.products.length > 0) parts.push(`${result.products.length} товаров`);
-      if (txResult.inserted > 0) parts.push(`${txResult.inserted} новых`);
+      if (result.products.length > 0) parts.push(`+${result.products.length} товаров`);
+      if (result.productUpdates.length > 0) parts.push(`обновлено ${result.productUpdates.length}`);
+      if (txResult.inserted > 0) parts.push(`${txResult.inserted} новых транзакций`);
       if (txResult.updated > 0) parts.push(`${txResult.updated} обновлено`);
       if (txResult.skipped > 0) parts.push(`${txResult.skipped} дублей`);
       success(`${store.name}: ${parts.join(" · ") || "нет изменений"}`);

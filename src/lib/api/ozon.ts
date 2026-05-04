@@ -298,20 +298,21 @@ async function fetchTypeNameMap(
 export async function fetchAllProducts(
   apiKey: string,
   clientId: string,
-): Promise<OzonProduct[]> {
+): Promise<{ products: OzonProduct[]; warnings: string[] }> {
+  const warnings: string[] = [];
   const listItems = await fetchProductIds(apiKey, clientId);
-  if (listItems.length === 0) return [];
+  if (listItems.length === 0) return { products: [], warnings };
 
   const productIds = listItems.map((i) => i.product_id);
 
   // Info, prices and category tree fetched in parallel. All best-effort.
   const [infoItems, priceItems, typeNameMap] = await Promise.all([
     fetchProductInfo(apiKey, clientId, productIds).catch((e: Error) => {
-      console.warn("[ozon] product/info/list failed (non-fatal):", e.message);
+      warnings.push(`Названия/габариты недоступны: ${e.message}`);
       return [] as InfoItem[];
     }),
     fetchProductPrices(apiKey, clientId, productIds).catch((e: Error) => {
-      console.warn("[ozon] product/info/prices failed (non-fatal):", e.message);
+      warnings.push(`Цены недоступны: ${e.message}`);
       return [] as PriceItem[];
     }),
     fetchTypeNameMap(apiKey, clientId),
@@ -320,7 +321,7 @@ export async function fetchAllProducts(
   const infoMap = new Map(infoItems.map((i) => [i.id, i]));
   const priceMap = new Map(priceItems.map((i) => [i.product_id, i]));
 
-  return listItems.map((li) => {
+  const products = listItems.map((li) => {
     const info = infoMap.get(li.product_id);
     const price = priceMap.get(li.product_id);
 
@@ -348,4 +349,6 @@ export async function fetchAllProducts(
       type_name: typeName,
     };
   });
+
+  return { products, warnings };
 }

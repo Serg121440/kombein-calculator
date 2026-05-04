@@ -31,9 +31,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const products = await fetchAllProducts(apiKey, clientId);
+    const { products, warnings } = await fetchAllProducts(apiKey, clientId);
+    if (warnings.length > 0) console.warn("[ozon/products] warnings:", warnings);
     console.log("[ozon/products] success count=%d", products.length);
-    return NextResponse.json({ products });
+    return NextResponse.json({ products, warnings });
   } catch (err) {
     const msg = (err as Error).message;
     console.error("[ozon/products] error:", msg);
