@@ -48,6 +48,14 @@ export default function ProductsPage() {
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const pageData = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
+  const tariffCategories = useMemo(() => {
+    const cats = new Set<string>();
+    for (const t of tariffs) {
+      if (t.category) cats.add(t.category);
+    }
+    return Array.from(cats).sort((a, b) => a.localeCompare(b, "ru"));
+  }, [tariffs]);
+
   const initialForm = useMemo<Omit<Product, "id" | "createdAt">>(
     () => ({
       storeId: stores[0]?.id ?? "",
@@ -396,14 +404,28 @@ export default function ProductsPage() {
             />
           </div>
           <div>
-            <label className="label">Категория</label>
+            <label className="label">
+              Категория
+              {tariffCategories.length > 0 && (
+                <span className="ml-1 text-xs text-gray-400 font-normal">
+                  (из тарифов: {tariffCategories.length})
+                </span>
+              )}
+            </label>
             <input
               className="input"
+              list="tariff-categories"
               value={form.category}
-              onChange={(e) =>
-                setForm({ ...form, category: e.target.value })
-              }
+              onChange={(e) => setForm({ ...form, category: e.target.value })}
+              placeholder={tariffCategories.length > 0 ? "Начните вводить или выберите из списка" : ""}
             />
+            {tariffCategories.length > 0 && (
+              <datalist id="tariff-categories">
+                {tariffCategories.map((cat) => (
+                  <option key={cat} value={cat} />
+                ))}
+              </datalist>
+            )}
           </div>
           <div>
             <label className="label">Активен</label>
