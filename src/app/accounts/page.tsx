@@ -382,6 +382,43 @@ export default function AccountsPage() {
                 <option value="0">Нет</option>
               </select>
             </div>
+            {editingStore.platform === "OZON" && (
+              <>
+                <div className="border-t border-gray-100 pt-3">
+                  <p className="text-xs text-gray-500 font-medium mb-1">
+                    Performance API (реклама) — необязательно
+                  </p>
+                  <p className="text-xs text-gray-400">
+                    Ключи: Ozon Seller → Реклама → Продвижение → API
+                  </p>
+                </div>
+                <div>
+                  <label className="label">Performance Client-ID</label>
+                  <input
+                    className="input"
+                    value={editingStore.perfClientId ?? ""}
+                    onChange={(e) =>
+                      updateStore(editingStore.id, { perfClientId: e.target.value.trim() || undefined })
+                    }
+                    placeholder="perf-client-id"
+                  />
+                </div>
+                <div>
+                  <label className="label">Performance Client-Secret</label>
+                  <input
+                    className="input"
+                    type="password"
+                    placeholder="Введите новый секрет"
+                    onChange={(e) => {
+                      const val = e.target.value.trim();
+                      if (!val) return;
+                      const encoded = typeof btoa !== "undefined" ? btoa(val) : val;
+                      updateStore(editingStore.id, { perfClientSecretEncoded: encoded });
+                    }}
+                  />
+                </div>
+              </>
+            )}
           </div>
         )}
       </Modal>
