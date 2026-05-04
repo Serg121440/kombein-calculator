@@ -13,26 +13,34 @@ const PERF_BASE = "https://performance.ozon.ru";
 
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 
-async function fetchToken(clientId: string, clientSecret: string): Promise<string> {
-  // Use redirect:"manual" so we can report the actual redirect target instead of looping
+async function tokenPost(url: string, body: string): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 30_000);
-  let res: Response;
   try {
-    res = await fetch(`${PERF_BASE}/api/client/token`, {
+    return await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ client_id: clientId, client_secret: clientSecret, grant_type: "client_credentials" }),
+      body,
       redirect: "manual",
       signal: controller.signal,
     });
   } finally {
     clearTimeout(timer);
   }
+}
 
+async function fetchToken(clientId: string, clientSecret: string): Promise<string> {
+  const body = JSON.stringify({ client_id: clientId, client_secret: clientSecret, grant_type: "client_credentials" });
+  let res = await tokenPost(`${PERF_BASE}/api/client/token`, body);
+
+  // Follow a single same-host redirect (Ozon adds ?__rr=1 on first request)
   if (res.status >= 300 && res.status < 400) {
-    const location = res.headers.get("location") ?? "(нет Location)";
-    throw new Error(`Токен-эндпоинт редиректит на: ${location} — возможно, неверный домен или истёк SSL`);
+    const location = res.headers.get("location") ?? "";
+    if (location && location.startsWith(PERF_BASE)) {
+      res = await tokenPost(location, body);
+    } else {
+      throw new Error(`Токен-эндпоинт редиректит за пределы домена: ${location || "(нет Location)"}`);
+    }
   }
 
   const data = await parseJson<{ access_token: string }>(res);
