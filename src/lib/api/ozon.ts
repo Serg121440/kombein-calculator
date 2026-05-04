@@ -168,7 +168,6 @@ async function fetchProductInfo(
 async function fetchProductPrices(
   apiKey: string,
   clientId: string,
-  productIds: number[],
 ): Promise<PriceItem[]> {
   const h = hdrs(apiKey, clientId);
   const all: PriceItem[] = [];
@@ -181,7 +180,7 @@ async function fetchProductPrices(
         method: "POST",
         headers: h,
         body: JSON.stringify({
-          filter: { product_id: productIds, visibility: "ALL" },
+          filter: { visibility: "ALL" },
           last_id: lastId,
           limit: PAGE_SIZE,
         }),
@@ -313,7 +312,7 @@ export async function fetchAllProducts(
       warnings.push(`Названия/габариты недоступны: ${e.message}`);
       return [] as InfoItem[];
     }),
-    fetchProductPrices(apiKey, clientId, productIds).catch((e: Error) => {
+    fetchProductPrices(apiKey, clientId).catch((e: Error) => {
       warnings.push(`Цены недоступны: ${e.message}`);
       return [] as PriceItem[];
     }),
