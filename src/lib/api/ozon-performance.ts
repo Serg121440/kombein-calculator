@@ -102,6 +102,48 @@ function rowsFromResponse(raw: unknown): Record<string, unknown>[] {
   return [];
 }
 
+function parseStatRows(rows: Record<string, unknown>[], dateFrom: string, dateTo: string): PerfDayStat[] {
+  return rows
+    .map((r) => ({
+      date: extractDate(r, dateFrom),
+      campaignId: extractCampaignId(r),
+      campaignName: "",
+      charge: extractCharge(r),
+      orders: Number(r["orders"] ?? r["orderCount"] ?? 0),
+    }))
+    .filter((s) => s.date >= dateFrom && s.date <= dateTo && s.charge > 0);
+}
+
+async function pollReport(
+  token: string,
+  uuid: string,
+  dateFrom: string,
+  dateTo: string,
+): Promise<PerfDayStat[]> {
+  // Poll up to 15 times with 2s delay = 30s max wait
+  for (let i = 0; i < 15; i++) {
+    await new Promise((r) => setTimeout(r, 2000));
+    try {
+      const res = await apiFetch(
+        `${PERF_BASE}/api/client/statistics/report?UUID=${uuid}`,
+        { method: "GET", headers: perfHdrs(token) },
+        { label: "ozon-perf:report/poll", timeoutMs: 15_000, maxRetries: 0 },
+      );
+      if (!res.ok) continue;
+      const raw = await res.json() as unknown;
+      // Status check: {status: "IN_PROGRESS"} → keep polling
+      if (raw && typeof raw === "object" && (raw as Record<string, unknown>)["status"] === "IN_PROGRESS") continue;
+      const rows = rowsFromResponse(raw);
+      if (rows.length > 0) return parseStatRows(rows, dateFrom, dateTo);
+      // status=OK but no rows → empty (no spend in period)
+      if (raw && typeof raw === "object" && (raw as Record<string, unknown>)["status"] === "OK") return [];
+    } catch {
+      continue;
+    }
+  }
+  return [];
+}
+
 async function fetchStats(
   token: string,
   campaignIds: string[],
@@ -110,20 +152,13 @@ async function fetchStats(
 ): Promise<{ stats: PerfDayStat[]; warning?: string }> {
   const idList = campaignIds.join(",");
 
-  const endpoints = [
-    // Async report generation (new API style per docs)
-    {
-      url: `${PERF_BASE}/api/client/statistic/orders/generate`,
-      init: { method: "POST", body: JSON.stringify({ campaigns: campaignIds, dateFrom, dateTo }) } as RequestInit,
-      label: "ozon-perf:statistic/orders/generate",
-    },
-    // Daily stats with campaign filter
+  // 1. Try sync daily endpoint first
+  const syncEndpoints = [
     {
       url: `${PERF_BASE}/api/client/statistics/daily?campaigns=${idList}&dateFrom=${dateFrom}&dateTo=${dateTo}`,
       init: { method: "GET" } as RequestInit,
       label: "ozon-perf:statistics/daily",
     },
-    // Statistics POST
     {
       url: `${PERF_BASE}/api/client/statistics`,
       init: { method: "POST", body: JSON.stringify({ campaigns: campaignIds, dateFrom, dateTo, groupBy: "DATE" }) } as RequestInit,
@@ -131,34 +166,45 @@ async function fetchStats(
     },
   ];
 
-  for (const a of endpoints) {
+  for (const a of syncEndpoints) {
     try {
-      const res = await apiFetch(a.url, { ...a.init, headers: perfHdrs(token) }, { label: a.label, timeoutMs: 45_000, maxRetries: 0 });
+      const res = await apiFetch(a.url, { ...a.init, headers: perfHdrs(token) }, { label: a.label, timeoutMs: 30_000, maxRetries: 0 });
       if (!res.ok) continue;
       const raw = await res.json() as unknown;
       const rows = rowsFromResponse(raw);
-
-      if (rows.length === 0) {
-        return { stats: [], warning: `Performance API ответил, но нет данных. ${JSON.stringify(raw).slice(0, 200)}` };
+      if (rows.length > 0) {
+        const stats = parseStatRows(rows, dateFrom, dateTo);
+        if (stats.length > 0) return { stats };
       }
-
-      const stats: PerfDayStat[] = rows
-        .map((r) => ({
-          date: extractDate(r, dateFrom),
-          campaignId: extractCampaignId(r),
-          campaignName: "",
-          charge: extractCharge(r),
-          orders: Number(r["orders"] ?? r["orderCount"] ?? 0),
-        }))
-        .filter((s) => s.date >= dateFrom && s.date <= dateTo && s.charge > 0);
-
-      return { stats };
     } catch {
       continue;
     }
   }
 
-  return { stats: [], warning: "Performance API: ни один endpoint не вернул данных" };
+  // 2. Async generate → poll pattern
+  const asyncEndpoints = [
+    `${PERF_BASE}/api/client/statistic/orders/generate`,
+    `${PERF_BASE}/api/client/statistic/products/generate`,
+  ];
+
+  for (const url of asyncEndpoints) {
+    try {
+      const res = await apiFetch(
+        url,
+        { method: "POST", headers: perfHdrs(token), body: JSON.stringify({ campaigns: campaignIds, dateFrom, dateTo }) },
+        { label: "ozon-perf:generate", timeoutMs: 30_000, maxRetries: 0 },
+      );
+      if (!res.ok) continue;
+      const data = await res.json() as { UUID?: string };
+      if (!data.UUID) continue;
+      const stats = await pollReport(token, data.UUID, dateFrom, dateTo);
+      if (stats.length > 0) return { stats };
+    } catch {
+      continue;
+    }
+  }
+
+  return { stats: [], warning: "Performance API: нет данных о рекламных расходах за период" };
 }
 
 // ─── Public entry point ───────────────────────────────────────────────────────
