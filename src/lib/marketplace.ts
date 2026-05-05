@@ -184,14 +184,43 @@ async function syncOzon(
     };
   });
 
-  // Performance API (advertising) is currently disabled:
-  //   - Vercel servers (US/EU) are geo-blocked by Ozon's anti-bot
-  //   - Browser is blocked by CORS (Ozon API has no CORS headers)
-  // Will work once deployed to a Russian server (server-to-server).
+  // Performance API (advertising expenses)
   if (store.perfClientId && store.perfClientSecretEncoded) {
-    apiWarnings.push(
-      "Реклама: Performance API доступна только при деплое на сервер в РФ (Vercel блокируется антиботом Ozon, браузер — CORS).",
-    );
+    const perfSecret = decodeKey(store.perfClientSecretEncoded);
+    const dateFrom = new Date(Date.now() - 30 * 86_400_000).toISOString().slice(0, 10);
+    const dateTo = new Date().toISOString().slice(0, 10);
+    try {
+      const perfRes = await fetch("/api/ozon/advertising", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ perfClientId: store.perfClientId, perfClientSecret: perfSecret, dateFrom, dateTo }),
+      });
+      const perfData = (await perfRes.json().catch(() => ({}))) as {
+        stats?: Array<{ date: string; campaignId: string; campaignName: string; charge: number }>;
+        warning?: string;
+        error?: string;
+      };
+      if (perfData.error) {
+        apiWarnings.push(`Реклама: ${perfData.error}`);
+      } else {
+        for (const s of perfData.stats ?? []) {
+          const externalId = `perf-${s.campaignId}-${s.date}`;
+          transactions.push({
+            storeId: store.id,
+            orderId: externalId,
+            externalId,
+            date: `${s.date}T00:00:00.000Z`,
+            type: "ADVERTISING",
+            amount: -s.charge,
+            description: `Реклама: ${s.campaignName || s.campaignId}`,
+            source: "api",
+          });
+        }
+        if (perfData.warning) apiWarnings.push(`Реклама: ${perfData.warning}`);
+      }
+    } catch (err) {
+      apiWarnings.push(`Реклама: ${(err as Error).message}`);
+    }
   }
 
   const warnings = [txData.warning, ...apiWarnings].filter(Boolean);
