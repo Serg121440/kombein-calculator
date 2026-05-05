@@ -13,80 +13,52 @@ const PERF_BASE = "https://performance.ozon.ru";
 
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 
-async function tokenPost(url: string, formBody: string, cookieJar: string[]): Promise<Response> {
+async function fetchToken(clientId: string, clientSecret: string): Promise<string> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 30_000);
-  const headers: Record<string, string> = {
-    // Standard OAuth2 token request uses form-encoding, not JSON.
-    // Ozon's anti-bot rejects JSON bodies on server IPs.
-    "Content-Type": "application/x-www-form-urlencoded",
-    Accept: "application/json",
-  };
-  if (cookieJar.length > 0) {
-    headers["Cookie"] = cookieJar.join("; ");
-  }
-  try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers,
-      body: formBody,
-      redirect: "manual",
-      signal: controller.signal,
-    });
-    const setCookies = (res.headers as Headers & { getSetCookie?: () => string[] }).getSetCookie?.() ?? [];
-    for (const sc of setCookies) {
-      const kv = sc.split(";")[0];
-      if (kv && !cookieJar.includes(kv)) cookieJar.push(kv);
+
+  // Try both body formats; form-encoded is RFC 6749 standard, JSON is Ozon's documented format.
+  // Let Node.js follow redirects automatically so anti-bot cookies are preserved between hops.
+  const attempts: Array<{ contentType: string; body: string }> = [
+    {
+      contentType: "application/x-www-form-urlencoded",
+      body: new URLSearchParams({ client_id: clientId, client_secret: clientSecret, grant_type: "client_credentials" }).toString(),
+    },
+    {
+      contentType: "application/json",
+      body: JSON.stringify({ client_id: clientId, client_secret: clientSecret, grant_type: "client_credentials" }),
+    },
+  ];
+
+  let lastError = "";
+  for (const attempt of attempts) {
+    try {
+      const res = await fetch(`${PERF_BASE}/api/client/token`, {
+        method: "POST",
+        headers: { "Content-Type": attempt.contentType, Accept: "application/json" },
+        body: attempt.body,
+        redirect: "follow",
+        signal: controller.signal,
+      });
+
+      if (res.ok) {
+        const data = await parseJson<{ access_token: string }>(res);
+        if (data.access_token) {
+          clearTimeout(timer);
+          return data.access_token;
+        }
+      }
+
+      const text = await res.text().catch(() => "");
+      const isHtml = text.trim().startsWith("<");
+      lastError = `${res.status} ${isHtml ? "(HTML — антибот)" : text.slice(0, 150)}`;
+    } catch (e) {
+      lastError = (e as Error).message;
     }
-    return res;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-async function fetchToken(clientId: string, clientSecret: string): Promise<string> {
-  // Standard OAuth2 client_credentials — form-encoded body per RFC 6749
-  const formBody = new URLSearchParams({
-    client_id: clientId,
-    client_secret: clientSecret,
-    grant_type: "client_credentials",
-  }).toString();
-
-  const cookieJar: string[] = [];
-  const trail: string[] = [];
-  let url = `${PERF_BASE}/api/client/token`;
-  let res = await tokenPost(url, formBody, cookieJar);
-  trail.push(`${res.status} ${url}`);
-
-  for (let i = 0; i < 8 && res.status >= 300 && res.status < 400; i++) {
-    const location = res.headers.get("location") ?? "";
-    const next = location.startsWith("http") ? location : `${PERF_BASE}${location}`;
-    if (!next.startsWith(PERF_BASE)) {
-      throw new Error(`Токен-эндпоинт редиректит за пределы домена: ${location}`);
-    }
-    url = next;
-    res = await tokenPost(url, formBody, cookieJar);
-    trail.push(`${res.status} ${url.replace(PERF_BASE, "")}`);
   }
 
-  if (res.status >= 300 && res.status < 400) {
-    throw new Error(
-      `Слишком много редиректов токен-эндпоинта. Цепочка: ${trail.join(" → ")}. Cookies=${cookieJar.length}.`,
-    );
-  }
-
-  if (!res.ok) {
-    const text = await res.text();
-    const isHtml = text.trim().startsWith("<");
-    const snippet = isHtml ? "(HTML страница — антибот Ozon заблокировал)" : text.slice(0, 200);
-    throw new Error(
-      `Performance API вернул ${res.status} вместо токена. Цепочка: ${trail.join(" → ")}. Cookies=${cookieJar.length}. Ответ: ${snippet}`,
-    );
-  }
-
-  const data = await parseJson<{ access_token: string }>(res);
-  if (!data.access_token) throw new Error("Нет access_token в ответе Performance API");
-  return data.access_token;
+  clearTimeout(timer);
+  throw new Error(`Performance API: не удалось получить токен. ${lastError}`);
 }
 
 function perfHdrs(token: string): Record<string, string> {
