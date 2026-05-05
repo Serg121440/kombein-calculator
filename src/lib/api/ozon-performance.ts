@@ -18,8 +18,12 @@ async function tokenPost(url: string, body: string, cookieJar: string[]): Promis
   const timer = setTimeout(() => controller.abort(), 30_000);
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
-    Accept: "application/json",
-    "User-Agent": "Mozilla/5.0 (compatible; kombein-calculator/1.0)",
+    Accept: "application/json, text/plain, */*",
+    "Accept-Language": "ru-RU,ru;q=0.9,en;q=0.8",
+    "User-Agent":
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+    Origin: PERF_BASE,
+    Referer: `${PERF_BASE}/`,
   };
   if (cookieJar.length > 0) {
     headers["Cookie"] = cookieJar.join("; ");
@@ -32,7 +36,6 @@ async function tokenPost(url: string, body: string, cookieJar: string[]): Promis
       redirect: "manual",
       signal: controller.signal,
     });
-    // Capture Set-Cookie from response and add to jar
     const setCookies = (res.headers as Headers & { getSetCookie?: () => string[] }).getSetCookie?.() ?? [];
     for (const sc of setCookies) {
       const kv = sc.split(";")[0];
@@ -47,11 +50,11 @@ async function tokenPost(url: string, body: string, cookieJar: string[]): Promis
 async function fetchToken(clientId: string, clientSecret: string): Promise<string> {
   const body = JSON.stringify({ client_id: clientId, client_secret: clientSecret, grant_type: "client_credentials" });
   const cookieJar: string[] = [];
+  const trail: string[] = [];
   let url = `${PERF_BASE}/api/client/token`;
   let res = await tokenPost(url, body, cookieJar);
+  trail.push(`${res.status} ${url}`);
 
-  // Ozon's anti-bot protection chains 302 → 307 with ?__rr counters.
-  // Send back any cookies it sets so subsequent hops can satisfy the check.
   for (let i = 0; i < 8 && res.status >= 300 && res.status < 400; i++) {
     const location = res.headers.get("location") ?? "";
     const next = location.startsWith("http") ? location : `${PERF_BASE}${location}`;
@@ -60,11 +63,21 @@ async function fetchToken(clientId: string, clientSecret: string): Promise<strin
     }
     url = next;
     res = await tokenPost(url, body, cookieJar);
+    trail.push(`${res.status} ${url.replace(PERF_BASE, "")}`);
   }
 
   if (res.status >= 300 && res.status < 400) {
     throw new Error(
-      `Слишком много редиректов токен-эндпоинта (последний → ${res.headers.get("location") ?? "?"}, cookies=${cookieJar.length}). Vercel/прокси не пропускает к Performance API.`,
+      `Слишком много редиректов токен-эндпоинта. Цепочка: ${trail.join(" → ")}. Cookies=${cookieJar.length}. Vercel/прокси блокируется антибот-защитой Ozon.`,
+    );
+  }
+
+  if (!res.ok) {
+    const text = await res.text();
+    const isHtml = text.trim().startsWith("<");
+    const snippet = isHtml ? "(HTML страница, не JSON — антибот заблокировал)" : text.slice(0, 200);
+    throw new Error(
+      `Performance API вернул ${res.status} вместо токена. Цепочка: ${trail.join(" → ")}. Cookies=${cookieJar.length}. Ответ: ${snippet}`,
     );
   }
 
