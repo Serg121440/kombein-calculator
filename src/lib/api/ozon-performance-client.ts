@@ -154,13 +154,6 @@ export async function fetchAdvertisingStatsClient(
     return { stats };
   } catch (err) {
     const msg = (err as Error).message;
-    // CORS errors from the browser typically surface as "Failed to fetch" or "TypeError"
-    if (msg.includes("Failed to fetch") || msg.toLowerCase().includes("cors") || msg === "TypeError") {
-      return {
-        stats: [],
-        error: `CORS блокирует прямой запрос к performance.ozon.ru из браузера. Браузер не может прочесть ответ Ozon API. Решение — серверный прокси в РФ. Деталь: ${msg}`,
-      };
-    }
-    return { stats: [], error: msg };
+    return { stats: [], error: `Performance API: ${msg}` };
   }
 }
