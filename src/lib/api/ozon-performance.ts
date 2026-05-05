@@ -75,20 +75,38 @@ export interface PerfDayStat {
   orders: number;
 }
 
-function extractCharge(r: Record<string, unknown>): number {
-  for (const key of ["charge", "moneySpent", "spent", "sum", "cost", "expenses", "totalCharge", "spend"]) {
-    const n = Number(r[key]);
-    if (r[key] != null && r[key] !== "" && Number.isFinite(n) && n > 0) return n;
+
+function parsePerfCsv(text: string, dateFrom: string, dateTo: string, campaignId: string): PerfDayStat[] {
+  const lines = text.split(/\r?\n/).filter((l) => l.trim() && !l.startsWith(";"));
+  if (lines.length < 2) return [];
+
+  const headers = lines[0].split(";").map((h) => h.trim().toLowerCase());
+
+  // Find relevant column indices
+  const dateIdx = headers.findIndex((h) => h.includes("дата") || h === "date");
+  const chargeIdx = headers.findIndex((h) =>
+    h.includes("расход") || h.includes("charge") || h.includes("spent") || h.includes("стоимость"),
+  );
+  const ordersIdx = headers.findIndex((h) => h.includes("заказ") || h === "orders");
+  const nameIdx = headers.findIndex((h) => h.includes("кампани") || h.includes("название") || h === "name");
+  const idIdx = headers.findIndex((h) => h === "id" || h === "campaign_id");
+
+  console.log(`[ozon-perf] csv headers: ${headers.join("|")} chargeIdx=${chargeIdx} dateIdx=${dateIdx}`);
+
+  const stats: PerfDayStat[] = [];
+  for (let i = 1; i < lines.length; i++) {
+    const cols = lines[i].split(";").map((c) => c.trim().replace(/,/g, "."));
+    const date = dateIdx >= 0 ? (cols[dateIdx] ?? "").slice(0, 10) : "";
+    const chargeRaw = chargeIdx >= 0 ? parseFloat(cols[chargeIdx] ?? "0") : 0;
+    const cid = idIdx >= 0 ? cols[idIdx] : campaignId;
+    const name = nameIdx >= 0 ? cols[nameIdx] : "";
+    const orders = ordersIdx >= 0 ? parseInt(cols[ordersIdx] ?? "0", 10) : 0;
+
+    if (chargeRaw > 0 && (!date || (date >= dateFrom && date <= dateTo))) {
+      stats.push({ date: date || dateFrom, campaignId: cid, campaignName: name, charge: chargeRaw, orders });
+    }
   }
-  return 0;
-}
-
-function extractDate(r: Record<string, unknown>, fallback: string): string {
-  return String(r["date"] ?? r["eventDate"] ?? r["day"] ?? fallback).slice(0, 10);
-}
-
-function extractCampaignId(r: Record<string, unknown>): string {
-  return String(r["campaignId"] ?? r["campaign_id"] ?? r["id"] ?? "");
+  return stats;
 }
 
 function rowsFromResponse(raw: unknown): Record<string, unknown>[] {
@@ -102,21 +120,10 @@ function rowsFromResponse(raw: unknown): Record<string, unknown>[] {
   return [];
 }
 
-function parseStatRows(rows: Record<string, unknown>[], dateFrom: string, dateTo: string): PerfDayStat[] {
-  return rows
-    .map((r) => ({
-      date: extractDate(r, dateFrom),
-      campaignId: extractCampaignId(r),
-      campaignName: "",
-      charge: extractCharge(r),
-      orders: Number(r["orders"] ?? r["orderCount"] ?? 0),
-    }))
-    .filter((s) => s.date >= dateFrom && s.date <= dateTo && s.charge > 0);
-}
-
 async function pollReport(
   token: string,
   uuid: string,
+  campaignId: string,
   dateFrom: string,
   dateTo: string,
 ): Promise<PerfDayStat[]> {
@@ -130,17 +137,27 @@ async function pollReport(
         { label: "ozon-perf:report/poll", timeoutMs: 15_000, maxRetries: 0 },
       );
       if (!res.ok) {
-        console.log(`[ozon-perf] poll ${uuid} status=${res.status}`);
+        console.log(`[ozon-perf] poll ${uuid} http=${res.status}`);
         continue;
       }
-      const raw = await res.json() as unknown;
-      const status = raw && typeof raw === "object" ? (raw as Record<string, unknown>)["status"] : undefined;
-      console.log(`[ozon-perf] poll ${uuid} attempt=${i + 1} status=${status} keys=${raw && typeof raw === "object" ? Object.keys(raw as object).join(",") : typeof raw}`);
+      const ct = res.headers.get("content-type") ?? "";
+      const text = await res.text();
+      console.log(`[ozon-perf] poll ${uuid} attempt=${i + 1} ct=${ct} len=${text.length} preview=${text.slice(0, 80)}`);
 
-      if (status === "IN_PROGRESS") continue;
-      const rows = rowsFromResponse(raw);
-      if (rows.length > 0) return parseStatRows(rows, dateFrom, dateTo);
-      if (status === "OK") return [];
+      // CSV response → ready
+      if (!ct.includes("json") || text.trim().startsWith("ID") || text.includes(";")) {
+        return parsePerfCsv(text, dateFrom, dateTo, campaignId);
+      }
+
+      // JSON response → check status
+      try {
+        const raw = JSON.parse(text) as Record<string, unknown>;
+        if (raw["status"] === "IN_PROGRESS") continue;
+        if (raw["status"] === "OK") return [];
+      } catch {
+        // Not JSON, treat as CSV
+        return parsePerfCsv(text, dateFrom, dateTo, campaignId);
+      }
     } catch (e) {
       console.log(`[ozon-perf] poll ${uuid} attempt=${i + 1} error=${(e as Error).message}`);
       continue;
@@ -166,10 +183,9 @@ async function fetchStats(
       { label: "ozon-perf:statistics/daily", timeoutMs: 30_000, maxRetries: 0 },
     );
     if (res.ok) {
-      const raw = await res.json() as unknown;
-      const rows = rowsFromResponse(raw);
-      const stats = rows.length > 0 ? parseStatRows(rows, dateFrom, dateTo) : [];
-      console.log(`[ozon-perf] daily sync: rows=${rows.length} stats=${stats.length} raw=${JSON.stringify(raw).slice(0, 150)}`);
+      const text = await res.text();
+      console.log(`[ozon-perf] daily sync ct=${res.headers.get("content-type")} len=${text.length} preview=${text.slice(0, 80)}`);
+      const stats = parsePerfCsv(text, dateFrom, dateTo, "");
       if (stats.length > 0) return { stats };
     }
   } catch (e) {
@@ -182,10 +198,9 @@ async function fetchStats(
   for (let i = 0; i < campaignIds.length; i += CAMPAIGN_BATCH) {
     batches.push(campaignIds.slice(i, i + CAMPAIGN_BATCH));
   }
-  // Also try with empty array (some accounts return all data without filter)
   if (batches.length === 0) batches.push([]);
 
-  for (const batch of batches.slice(0, 5)) { // limit to first 50 campaigns to avoid timeouts
+  for (const batch of batches.slice(0, 5)) { // first 50 campaigns max to avoid request timeout
     try {
       const res = await apiFetch(
         `${PERF_BASE}/api/client/statistic/orders/generate`,
@@ -193,15 +208,16 @@ async function fetchStats(
         { label: "ozon-perf:generate", timeoutMs: 30_000, maxRetries: 0 },
       );
       if (!res.ok) {
-        console.log(`[ozon-perf] generate batch=${batch.length} status=${res.status}`);
+        console.log(`[ozon-perf] generate batch=${batch.length} http=${res.status}`);
         continue;
       }
       const data = await res.json() as { UUID?: string };
       console.log(`[ozon-perf] generate batch=${batch.length} UUID=${data.UUID}`);
       if (!data.UUID) continue;
-      const stats = await pollReport(token, data.UUID, dateFrom, dateTo);
+      const batchCampaignId = batch[0] ?? "";
+      const stats = await pollReport(token, data.UUID, batchCampaignId, dateFrom, dateTo);
       allStats.push(...stats);
-      if (allStats.length > 0) break; // got data from first batch — enough
+      if (allStats.length > 0) break;
     } catch (e) {
       console.log(`[ozon-perf] generate error: ${(e as Error).message}`);
     }
