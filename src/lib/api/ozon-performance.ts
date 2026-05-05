@@ -231,25 +231,23 @@ async function fetchStats(
       );
       if (!res.ok) continue;
       const raw = await res.json() as unknown;
-      console.log(`[ozon-perf] sync ${path.split("?")[0]} raw=${JSON.stringify(raw).slice(0, 200)}`);
-
-      // Response structure unknown until we see it; log and handle arrays
+      // Response: { rows: [{ id, date, title, moneySpent, bonusSpent, ... }] }
+      // or daily: { rows: [{ id, date, title, shows, clicks, expense, orders }] }
       const rows = Array.isArray(raw) ? raw as Record<string, unknown>[]
-        : raw && typeof raw === "object" ? Object.values(raw as Record<string, unknown>).find(Array.isArray) as Record<string, unknown>[] ?? []
+        : raw && typeof raw === "object" ? (Object.values(raw as Record<string, unknown>).find(Array.isArray) as Record<string, unknown>[] ?? [])
         : [];
       if (rows.length > 0) {
-        // Try to extract charge from JSON rows
         const stats: PerfDayStat[] = rows
           .map((r) => {
-            const charge = ["charge", "expense", "расход", "moneySpent", "spent"].reduce((acc, k) => {
-              const v = parseFloat(String(r[k] ?? 0).replace(",", "."));
-              return acc || (Number.isFinite(v) && v > 0 ? v : 0);
-            }, 0);
-            const date = String(r["date"] ?? r["дата"] ?? dateFrom).slice(0, 10);
+            // moneySpent uses Russian comma decimal ("37666,70")
+            const parseRub = (v: unknown) => parseFloat(String(v ?? "0").replace(",", ".")) || 0;
+            const charge = parseRub(r["moneySpent"]) || parseRub(r["expense"]) || parseRub(r["расход"]) || parseRub(r["charge"]);
+            const rawDate = String(r["date"] ?? r["дата"] ?? dateFrom);
+            const date = rawDate.includes(".") ? rawDate.split(".").reverse().join("-").slice(0, 10) : rawDate.slice(0, 10);
             return {
               date,
-              campaignId: String(r["campaignId"] ?? r["id"] ?? ""),
-              campaignName: String(r["title"] ?? r["campaignName"] ?? r["название"] ?? ""),
+              campaignId: String(r["id"] ?? r["campaignId"] ?? ""),
+              campaignName: String(r["title"] ?? r["campaignName"] ?? ""),
               charge,
               orders: Number(r["orders"] ?? r["заказы"] ?? 0),
             };
