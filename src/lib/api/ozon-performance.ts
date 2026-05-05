@@ -53,7 +53,10 @@ async function fetchToken(clientId: string, clientSecret: string): Promise<strin
       const isHtml = text.trim().startsWith("<");
       lastError = `${res.status} ${isHtml ? "(HTML — антибот)" : text.slice(0, 150)}`;
     } catch (e) {
-      lastError = (e as Error).message;
+      const err = e as Error & { cause?: { code?: string; message?: string }; code?: string };
+      const causeCode = err.cause?.code ?? err.code ?? "";
+      const causeMsg = err.cause?.message ?? "";
+      lastError = `${err.message}${causeCode ? ` [${causeCode}]` : ""}${causeMsg && causeMsg !== err.message ? ` (${causeMsg})` : ""}`;
     }
   }
 
