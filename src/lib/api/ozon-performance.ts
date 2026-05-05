@@ -1,74 +1,44 @@
 /**
  * Ozon Performance API client (advertising expenses).
- * Docs: https://docs.ozon.ru/api/performance/#tag/Token
+ * Docs: https://docs.ozon.ru/api/performance/
  *
- * Auth: separate OAuth2 credentials (client_id + client_secret),
- * distinct from the Seller API key. Obtain in:
- * Ozon Seller → Реклама → Продвижение → API
+ * Auth: separate credentials (client_id + client_secret) from
+ * Ozon Seller → Настройки → API-ключи → сервисный аккаунт.
+ * New host since 2025-01-15: api-performance.ozon.ru
  */
 
 import { apiFetch, parseJson } from "./http";
 
-const PERF_BASE = "https://performance.ozon.ru";
+const PERF_BASE = "https://api-performance.ozon.ru";
 
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 
 async function fetchToken(clientId: string, clientSecret: string): Promise<string> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 30_000);
-
-  // Try both body formats; form-encoded is RFC 6749 standard, JSON is Ozon's documented format.
-  // Let Node.js follow redirects automatically so anti-bot cookies are preserved between hops.
-  const attempts: Array<{ contentType: string; body: string }> = [
+  const res = await apiFetch(
+    `${PERF_BASE}/api/client/token`,
     {
-      contentType: "application/x-www-form-urlencoded",
-      body: new URLSearchParams({ client_id: clientId, client_secret: clientSecret, grant_type: "client_credentials" }).toString(),
-    },
-    {
-      contentType: "application/json",
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
       body: JSON.stringify({ client_id: clientId, client_secret: clientSecret, grant_type: "client_credentials" }),
     },
-  ];
+    { label: "ozon-perf:token", timeoutMs: 30_000, maxRetries: 1 },
+  );
 
-  let lastError = "";
-  for (const attempt of attempts) {
-    try {
-      const res = await fetch(`${PERF_BASE}/api/client/token`, {
-        method: "POST",
-        headers: { "Content-Type": attempt.contentType, Accept: "application/json" },
-        body: attempt.body,
-        redirect: "follow",
-        signal: controller.signal,
-      });
-
-      if (res.ok) {
-        const data = await parseJson<{ access_token: string }>(res);
-        if (data.access_token) {
-          clearTimeout(timer);
-          return data.access_token;
-        }
-      }
-
-      const text = await res.text().catch(() => "");
-      const isHtml = text.trim().startsWith("<");
-      lastError = `${res.status} ${isHtml ? "(HTML — антибот)" : text.slice(0, 150)}`;
-    } catch (e) {
-      const err = e as Error & { cause?: { code?: string; message?: string }; code?: string };
-      const causeCode = err.cause?.code ?? err.code ?? "";
-      const causeMsg = err.cause?.message ?? "";
-      lastError = `${err.message}${causeCode ? ` [${causeCode}]` : ""}${causeMsg && causeMsg !== err.message ? ` (${causeMsg})` : ""}`;
-    }
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Performance API token: ${res.status} ${text.slice(0, 200)}`);
   }
 
-  clearTimeout(timer);
-  throw new Error(`Performance API: не удалось получить токен. ${lastError}`);
+  const data = await parseJson<{ access_token: string }>(res);
+  if (!data.access_token) throw new Error("Performance API: нет access_token в ответе");
+  return data.access_token;
 }
 
 function perfHdrs(token: string): Record<string, string> {
   return {
     Authorization: `Bearer ${token}`,
     "Content-Type": "application/json",
-    "Client-Name": "kombein-calculator",
+    Accept: "application/json",
   };
 }
 
@@ -81,108 +51,55 @@ interface Campaign {
 }
 
 async function fetchCampaigns(token: string): Promise<Campaign[]> {
-  const paths = [
-    "/api/client/campaign",
-    "/api/client/campaigns",
-    "/api/client/campaign/list",
-  ];
-  for (const path of paths) {
-    try {
-      const res = await apiFetch(
-        `${PERF_BASE}${path}`,
-        { method: "GET", headers: perfHdrs(token) },
-        { label: `ozon-perf:campaign${path}`, maxRetries: 0 },
-      );
-      if (!res.ok) continue;
-      const data = await res.json() as { list?: Campaign[]; campaigns?: Campaign[]; items?: Campaign[] };
-      const list = data.list ?? data.campaigns ?? data.items ?? [];
-      if (Array.isArray(list)) return list;
-    } catch {
-      continue;
-    }
+  try {
+    const res = await apiFetch(
+      `${PERF_BASE}/api/client/campaign`,
+      { method: "GET", headers: perfHdrs(token) },
+      { label: "ozon-perf:campaigns", maxRetries: 0 },
+    );
+    if (!res.ok) return [];
+    const data = await res.json() as { list?: Campaign[]; campaigns?: Campaign[]; items?: Campaign[] };
+    return data.list ?? data.campaigns ?? data.items ?? [];
+  } catch {
+    return [];
   }
-  return [];
 }
 
-// ─── Statistics: try multiple endpoint variants ───────────────────────────────
+// ─── Statistics ───────────────────────────────────────────────────────────────
 
 export interface PerfDayStat {
   date: string;
   campaignId: string;
   campaignName: string;
-  /** Total advertising spend for the day, RUB */
   charge: number;
   orders: number;
 }
 
-/** Extract spend amount from a raw stat row — tries all known field names */
 function extractCharge(r: Record<string, unknown>): number {
-  const candidates = [
-    r["charge"],
-    r["moneySpent"],
-    r["spent"],
-    r["sum"],
-    r["cost"],
-    r["expenses"],
-    r["totalCharge"],
-    r["spend"],
-    r["views"] !== undefined ? undefined : undefined, // not a spend field
-  ];
-  for (const v of candidates) {
-    const n = Number(v);
-    if (v !== undefined && v !== null && v !== "" && Number.isFinite(n) && n > 0) return n;
+  for (const key of ["charge", "moneySpent", "spent", "sum", "cost", "expenses", "totalCharge", "spend"]) {
+    const n = Number(r[key]);
+    if (r[key] != null && r[key] !== "" && Number.isFinite(n) && n > 0) return n;
   }
   return 0;
 }
 
 function extractDate(r: Record<string, unknown>, fallback: string): string {
-  const raw = String(r["date"] ?? r["eventDate"] ?? r["day"] ?? fallback);
-  return raw.slice(0, 10);
+  return String(r["date"] ?? r["eventDate"] ?? r["day"] ?? fallback).slice(0, 10);
 }
 
 function extractCampaignId(r: Record<string, unknown>): string {
   return String(r["campaignId"] ?? r["campaign_id"] ?? r["id"] ?? "");
 }
 
-async function tryStatEndpoint(
-  token: string,
-  url: string,
-  init: RequestInit,
-  label: string,
-  dateFrom: string,
-  dateTo: string,
-): Promise<{ stats: PerfDayStat[]; rawDebug: unknown } | null> {
-  try {
-    const res = await apiFetch(url, { ...init, headers: perfHdrs(token) }, { label, timeoutMs: 45_000 });
-    if (!res.ok) return null;
-    const raw = await res.json() as Record<string, unknown>;
-
-    // Find an array of stat rows anywhere in the response
-    let rows: Record<string, unknown>[] = [];
+function rowsFromResponse(raw: unknown): Record<string, unknown>[] {
+  if (Array.isArray(raw)) return raw as Record<string, unknown>[];
+  if (raw && typeof raw === "object") {
     for (const key of ["rows", "items", "data", "list", "statistics", "stats", "result"]) {
-      if (Array.isArray(raw[key])) {
-        rows = raw[key] as Record<string, unknown>[];
-        break;
-      }
+      const v = (raw as Record<string, unknown>)[key];
+      if (Array.isArray(v)) return v as Record<string, unknown>[];
     }
-    if (rows.length === 0 && Array.isArray(raw)) {
-      rows = raw as Record<string, unknown>[];
-    }
-
-    const stats: PerfDayStat[] = rows
-      .map((r) => ({
-        date: extractDate(r, dateFrom),
-        campaignId: extractCampaignId(r),
-        campaignName: "",
-        charge: extractCharge(r),
-        orders: Number(r["orders"] ?? r["orderCount"] ?? 0),
-      }))
-      .filter((s) => s.date >= dateFrom && s.date <= dateTo && s.charge > 0);
-
-    return { stats, rawDebug: raw };
-  } catch {
-    return null;
   }
+  return [];
 }
 
 async function fetchStats(
@@ -190,57 +107,58 @@ async function fetchStats(
   campaignIds: string[],
   dateFrom: string,
   dateTo: string,
-): Promise<{ stats: PerfDayStat[]; rawDebug?: unknown; warning?: string }> {
+): Promise<{ stats: PerfDayStat[]; warning?: string }> {
   const idList = campaignIds.join(",");
 
-  // Try endpoints in order of likelihood
-  const attempts = [
-    // 1. Daily stats GET with date params
+  const endpoints = [
+    // Async report generation (new API style per docs)
     {
-      url: `${PERF_BASE}/api/client/statistics/daily?dateFrom=${dateFrom}&dateTo=${dateTo}`,
-      init: { method: "GET" } as RequestInit,
-      label: "ozon-perf:statistics/daily",
+      url: `${PERF_BASE}/api/client/statistic/orders/generate`,
+      init: { method: "POST", body: JSON.stringify({ campaigns: campaignIds, dateFrom, dateTo }) } as RequestInit,
+      label: "ozon-perf:statistic/orders/generate",
     },
-    // 2. Statistics POST (report-style)
-    {
-      url: `${PERF_BASE}/api/client/statistics`,
-      init: {
-        method: "POST",
-        body: JSON.stringify({ campaigns: campaignIds, dateFrom, dateTo, groupBy: "DATE" }),
-      } as RequestInit,
-      label: "ozon-perf:statistics",
-    },
-    // 3. Statistics with campaign ids in query
+    // Daily stats with campaign filter
     {
       url: `${PERF_BASE}/api/client/statistics/daily?campaigns=${idList}&dateFrom=${dateFrom}&dateTo=${dateTo}`,
       init: { method: "GET" } as RequestInit,
-      label: "ozon-perf:statistics/daily-ids",
+      label: "ozon-perf:statistics/daily",
     },
-    // 4. JSON report endpoint
+    // Statistics POST
     {
-      url: `${PERF_BASE}/api/client/statistics/json`,
-      init: {
-        method: "POST",
-        body: JSON.stringify({ campaigns: campaignIds, dateFrom, dateTo }),
-      } as RequestInit,
-      label: "ozon-perf:statistics/json",
+      url: `${PERF_BASE}/api/client/statistics`,
+      init: { method: "POST", body: JSON.stringify({ campaigns: campaignIds, dateFrom, dateTo, groupBy: "DATE" }) } as RequestInit,
+      label: "ozon-perf:statistics",
     },
   ];
 
-  for (const a of attempts) {
-    const result = await tryStatEndpoint(token, a.url, a.init, a.label, dateFrom, dateTo);
-    if (result !== null) {
-      if (result.stats.length > 0) return result;
-      // Endpoint responded but no charge > 0 — return with debug
-      return {
-        stats: [],
-        rawDebug: result.rawDebug,
-        warning: `Performance API ответил, но нет расходов > 0. Ответ: ${JSON.stringify(result.rawDebug).slice(0, 300)}`,
-      };
+  for (const a of endpoints) {
+    try {
+      const res = await apiFetch(a.url, { ...a.init, headers: perfHdrs(token) }, { label: a.label, timeoutMs: 45_000, maxRetries: 0 });
+      if (!res.ok) continue;
+      const raw = await res.json() as unknown;
+      const rows = rowsFromResponse(raw);
+
+      if (rows.length === 0) {
+        return { stats: [], warning: `Performance API ответил, но нет данных. ${JSON.stringify(raw).slice(0, 200)}` };
+      }
+
+      const stats: PerfDayStat[] = rows
+        .map((r) => ({
+          date: extractDate(r, dateFrom),
+          campaignId: extractCampaignId(r),
+          campaignName: "",
+          charge: extractCharge(r),
+          orders: Number(r["orders"] ?? r["orderCount"] ?? 0),
+        }))
+        .filter((s) => s.date >= dateFrom && s.date <= dateTo && s.charge > 0);
+
+      return { stats };
+    } catch {
+      continue;
     }
   }
 
-  return { stats: [], warning: "Все варианты endpoint'ов Performance API не ответили" };
+  return { stats: [], warning: "Performance API: ни один endpoint не вернул данных" };
 }
 
 // ─── Public entry point ───────────────────────────────────────────────────────
@@ -254,8 +172,6 @@ export async function fetchAdvertisingStats(
   const token = await fetchToken(clientId, clientSecret);
   const campaigns = await fetchCampaigns(token);
 
-  // Even with 0 campaigns (endpoint 404 or empty account), try fetching stats —
-  // some statistics endpoints don't require campaign IDs.
   const activeCampaignIds = campaigns
     .filter((c) => c.state !== "ARCHIVED" && c.state !== "STOPPED")
     .map((c) => c.id);
