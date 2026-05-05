@@ -40,14 +40,17 @@ function extractCampaignId(r: Record<string, unknown>): string {
 }
 
 async function fetchToken(clientId: string, clientSecret: string): Promise<string> {
+  // Use form-encoded body to avoid CORS preflight (simple request).
+  // JSON content-type triggers OPTIONS preflight which Ozon redirects → browser blocks.
+  const body = new URLSearchParams({
+    client_id: clientId,
+    client_secret: clientSecret,
+    grant_type: "client_credentials",
+  });
   const res = await fetch(`${PERF_BASE}/api/client/token`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      client_id: clientId,
-      client_secret: clientSecret,
-      grant_type: "client_credentials",
-    }),
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body,
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
