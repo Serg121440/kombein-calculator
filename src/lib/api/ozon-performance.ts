@@ -129,20 +129,28 @@ async function pollReport(
         { method: "GET", headers: perfHdrs(token) },
         { label: "ozon-perf:report/poll", timeoutMs: 15_000, maxRetries: 0 },
       );
-      if (!res.ok) continue;
+      if (!res.ok) {
+        console.log(`[ozon-perf] poll ${uuid} status=${res.status}`);
+        continue;
+      }
       const raw = await res.json() as unknown;
-      // Status check: {status: "IN_PROGRESS"} → keep polling
-      if (raw && typeof raw === "object" && (raw as Record<string, unknown>)["status"] === "IN_PROGRESS") continue;
+      const status = raw && typeof raw === "object" ? (raw as Record<string, unknown>)["status"] : undefined;
+      console.log(`[ozon-perf] poll ${uuid} attempt=${i + 1} status=${status} keys=${raw && typeof raw === "object" ? Object.keys(raw as object).join(",") : typeof raw}`);
+
+      if (status === "IN_PROGRESS") continue;
       const rows = rowsFromResponse(raw);
       if (rows.length > 0) return parseStatRows(rows, dateFrom, dateTo);
-      // status=OK but no rows → empty (no spend in period)
-      if (raw && typeof raw === "object" && (raw as Record<string, unknown>)["status"] === "OK") return [];
-    } catch {
+      if (status === "OK") return [];
+    } catch (e) {
+      console.log(`[ozon-perf] poll ${uuid} attempt=${i + 1} error=${(e as Error).message}`);
       continue;
     }
   }
+  console.log(`[ozon-perf] poll ${uuid} timed out after 30s`);
   return [];
 }
+
+const CAMPAIGN_BATCH = 10;
 
 async function fetchStats(
   token: string,
@@ -150,60 +158,56 @@ async function fetchStats(
   dateFrom: string,
   dateTo: string,
 ): Promise<{ stats: PerfDayStat[]; warning?: string }> {
-  const idList = campaignIds.join(",");
-
-  // 1. Try sync daily endpoint first
-  const syncEndpoints = [
-    {
-      url: `${PERF_BASE}/api/client/statistics/daily?campaigns=${idList}&dateFrom=${dateFrom}&dateTo=${dateTo}`,
-      init: { method: "GET" } as RequestInit,
-      label: "ozon-perf:statistics/daily",
-    },
-    {
-      url: `${PERF_BASE}/api/client/statistics`,
-      init: { method: "POST", body: JSON.stringify({ campaigns: campaignIds, dateFrom, dateTo, groupBy: "DATE" }) } as RequestInit,
-      label: "ozon-perf:statistics",
-    },
-  ];
-
-  for (const a of syncEndpoints) {
-    try {
-      const res = await apiFetch(a.url, { ...a.init, headers: perfHdrs(token) }, { label: a.label, timeoutMs: 30_000, maxRetries: 0 });
-      if (!res.ok) continue;
+  // 1. Try sync daily endpoint (no campaign filter — returns all)
+  try {
+    const res = await apiFetch(
+      `${PERF_BASE}/api/client/statistics/daily?dateFrom=${dateFrom}&dateTo=${dateTo}`,
+      { method: "GET", headers: perfHdrs(token) },
+      { label: "ozon-perf:statistics/daily", timeoutMs: 30_000, maxRetries: 0 },
+    );
+    if (res.ok) {
       const raw = await res.json() as unknown;
       const rows = rowsFromResponse(raw);
-      if (rows.length > 0) {
-        const stats = parseStatRows(rows, dateFrom, dateTo);
-        if (stats.length > 0) return { stats };
-      }
-    } catch {
-      continue;
+      const stats = rows.length > 0 ? parseStatRows(rows, dateFrom, dateTo) : [];
+      console.log(`[ozon-perf] daily sync: rows=${rows.length} stats=${stats.length} raw=${JSON.stringify(raw).slice(0, 150)}`);
+      if (stats.length > 0) return { stats };
     }
+  } catch (e) {
+    console.log(`[ozon-perf] daily sync error: ${(e as Error).message}`);
   }
 
-  // 2. Async generate → poll pattern
-  const asyncEndpoints = [
-    `${PERF_BASE}/api/client/statistic/orders/generate`,
-    `${PERF_BASE}/api/client/statistic/products/generate`,
-  ];
+  // 2. Async generate → poll, batching 10 campaigns at a time (API limit)
+  const allStats: PerfDayStat[] = [];
+  const batches: string[][] = [];
+  for (let i = 0; i < campaignIds.length; i += CAMPAIGN_BATCH) {
+    batches.push(campaignIds.slice(i, i + CAMPAIGN_BATCH));
+  }
+  // Also try with empty array (some accounts return all data without filter)
+  if (batches.length === 0) batches.push([]);
 
-  for (const url of asyncEndpoints) {
+  for (const batch of batches.slice(0, 5)) { // limit to first 50 campaigns to avoid timeouts
     try {
       const res = await apiFetch(
-        url,
-        { method: "POST", headers: perfHdrs(token), body: JSON.stringify({ campaigns: campaignIds, dateFrom, dateTo }) },
+        `${PERF_BASE}/api/client/statistic/orders/generate`,
+        { method: "POST", headers: perfHdrs(token), body: JSON.stringify({ campaigns: batch, dateFrom, dateTo }) },
         { label: "ozon-perf:generate", timeoutMs: 30_000, maxRetries: 0 },
       );
-      if (!res.ok) continue;
+      if (!res.ok) {
+        console.log(`[ozon-perf] generate batch=${batch.length} status=${res.status}`);
+        continue;
+      }
       const data = await res.json() as { UUID?: string };
+      console.log(`[ozon-perf] generate batch=${batch.length} UUID=${data.UUID}`);
       if (!data.UUID) continue;
       const stats = await pollReport(token, data.UUID, dateFrom, dateTo);
-      if (stats.length > 0) return { stats };
-    } catch {
-      continue;
+      allStats.push(...stats);
+      if (allStats.length > 0) break; // got data from first batch — enough
+    } catch (e) {
+      console.log(`[ozon-perf] generate error: ${(e as Error).message}`);
     }
   }
 
+  if (allStats.length > 0) return { stats: allStats };
   return { stats: [], warning: "Performance API: нет данных о рекламных расходах за период" };
 }
 
