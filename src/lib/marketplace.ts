@@ -184,41 +184,14 @@ async function syncOzon(
     };
   });
 
-  // Advertising costs from Ozon Performance API — direct browser fetch
-  // (Vercel servers are geo-blocked by Ozon, but the user's browser in RU is not)
+  // Performance API (advertising) is currently disabled:
+  //   - Vercel servers (US/EU) are geo-blocked by Ozon's anti-bot
+  //   - Browser is blocked by CORS (Ozon API has no CORS headers)
+  // Will work once deployed to a Russian server (server-to-server).
   if (store.perfClientId && store.perfClientSecretEncoded) {
-    const perfSecret = decodeKey(store.perfClientSecretEncoded);
-    const now = new Date();
-    const dateFrom = new Date(now.getTime() - 30 * 86_400_000).toISOString().slice(0, 10);
-    const dateTo = now.toISOString().slice(0, 10);
-    try {
-      const { fetchAdvertisingStatsClient } = await import("./api/ozon-performance-client");
-      const advData = await fetchAdvertisingStatsClient(store.perfClientId, perfSecret, dateFrom, dateTo);
-      if (advData.error) {
-        apiWarnings.push(`Реклама: ${advData.error}`);
-      } else {
-        let advCount = 0;
-        for (const stat of advData.stats) {
-          if (stat.charge > 0) {
-            transactions.push({
-              storeId: store.id,
-              orderId: `perf-${stat.campaignId}-${stat.date}`,
-              date: new Date(stat.date).toISOString(),
-              type: "ADVERTISING",
-              amount: -stat.charge,
-              description: `Реклама: ${stat.campaignName}`,
-              source: "api",
-              externalId: `perf-${stat.campaignId}-${stat.date}`,
-            });
-            advCount++;
-          }
-        }
-        if (advData.warning) apiWarnings.push(advData.warning);
-        else if (advCount === 0) apiWarnings.push("Performance API: расходов не найдено");
-      }
-    } catch (e) {
-      apiWarnings.push(`Реклама: ${(e as Error).message}`);
-    }
+    apiWarnings.push(
+      "Реклама: Performance API доступна только при деплое на сервер в РФ (Vercel блокируется антиботом Ozon, браузер — CORS).",
+    );
   }
 
   const warnings = [txData.warning, ...apiWarnings].filter(Boolean);

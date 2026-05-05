@@ -316,6 +316,9 @@ export default function AccountsPage() {
                 <p className="text-xs text-gray-400 mb-2">
                   Отдельные ключи из Ozon Seller → Реклама → Продвижение → API
                 </p>
+                <p className="text-xs text-amber-600 bg-amber-50 rounded px-2 py-1.5">
+                  ⓘ Сейчас не работает: Vercel блокируется антиботом Ozon, а браузер — CORS. Заработает после переноса приложения на сервер в РФ.
+                </p>
               </div>
               <div>
                 <label className="label">Performance Client-ID</label>
@@ -405,8 +408,11 @@ export default function AccountsPage() {
                   <p className="text-xs text-gray-500 font-medium mb-1">
                     Performance API (реклама) — необязательно
                   </p>
-                  <p className="text-xs text-gray-400">
+                  <p className="text-xs text-gray-400 mb-2">
                     Ключи: Ozon Seller → Реклама → Продвижение → API
+                  </p>
+                  <p className="text-xs text-amber-600 bg-amber-50 rounded px-2 py-1.5">
+                    ⓘ Сейчас не работает: Vercel блокируется антиботом Ozon, а браузер — CORS. Заработает после переноса приложения на сервер в РФ.
                   </p>
                 </div>
                 <div>
