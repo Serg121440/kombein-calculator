@@ -13,17 +13,14 @@ const PERF_BASE = "https://performance.ozon.ru";
 
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 
-async function tokenPost(url: string, body: string, cookieJar: string[]): Promise<Response> {
+async function tokenPost(url: string, formBody: string, cookieJar: string[]): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 30_000);
   const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    Accept: "application/json, text/plain, */*",
-    "Accept-Language": "ru-RU,ru;q=0.9,en;q=0.8",
-    "User-Agent":
-      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-    Origin: PERF_BASE,
-    Referer: `${PERF_BASE}/`,
+    // Standard OAuth2 token request uses form-encoding, not JSON.
+    // Ozon's anti-bot rejects JSON bodies on server IPs.
+    "Content-Type": "application/x-www-form-urlencoded",
+    Accept: "application/json",
   };
   if (cookieJar.length > 0) {
     headers["Cookie"] = cookieJar.join("; ");
@@ -32,7 +29,7 @@ async function tokenPost(url: string, body: string, cookieJar: string[]): Promis
     const res = await fetch(url, {
       method: "POST",
       headers,
-      body,
+      body: formBody,
       redirect: "manual",
       signal: controller.signal,
     });
@@ -48,11 +45,17 @@ async function tokenPost(url: string, body: string, cookieJar: string[]): Promis
 }
 
 async function fetchToken(clientId: string, clientSecret: string): Promise<string> {
-  const body = JSON.stringify({ client_id: clientId, client_secret: clientSecret, grant_type: "client_credentials" });
+  // Standard OAuth2 client_credentials — form-encoded body per RFC 6749
+  const formBody = new URLSearchParams({
+    client_id: clientId,
+    client_secret: clientSecret,
+    grant_type: "client_credentials",
+  }).toString();
+
   const cookieJar: string[] = [];
   const trail: string[] = [];
   let url = `${PERF_BASE}/api/client/token`;
-  let res = await tokenPost(url, body, cookieJar);
+  let res = await tokenPost(url, formBody, cookieJar);
   trail.push(`${res.status} ${url}`);
 
   for (let i = 0; i < 8 && res.status >= 300 && res.status < 400; i++) {
@@ -62,20 +65,20 @@ async function fetchToken(clientId: string, clientSecret: string): Promise<strin
       throw new Error(`Токен-эндпоинт редиректит за пределы домена: ${location}`);
     }
     url = next;
-    res = await tokenPost(url, body, cookieJar);
+    res = await tokenPost(url, formBody, cookieJar);
     trail.push(`${res.status} ${url.replace(PERF_BASE, "")}`);
   }
 
   if (res.status >= 300 && res.status < 400) {
     throw new Error(
-      `Слишком много редиректов токен-эндпоинта. Цепочка: ${trail.join(" → ")}. Cookies=${cookieJar.length}. Vercel/прокси блокируется антибот-защитой Ozon.`,
+      `Слишком много редиректов токен-эндпоинта. Цепочка: ${trail.join(" → ")}. Cookies=${cookieJar.length}.`,
     );
   }
 
   if (!res.ok) {
     const text = await res.text();
     const isHtml = text.trim().startsWith("<");
-    const snippet = isHtml ? "(HTML страница, не JSON — антибот заблокировал)" : text.slice(0, 200);
+    const snippet = isHtml ? "(HTML страница — антибот Ozon заблокировал)" : text.slice(0, 200);
     throw new Error(
       `Performance API вернул ${res.status} вместо токена. Цепочка: ${trail.join(" → ")}. Cookies=${cookieJar.length}. Ответ: ${snippet}`,
     );
