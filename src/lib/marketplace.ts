@@ -184,28 +184,21 @@ async function syncOzon(
     };
   });
 
-  // Advertising costs from Ozon Performance API — non-fatal
+  // Advertising costs from Ozon Performance API — direct browser fetch
+  // (Vercel servers are geo-blocked by Ozon, but the user's browser in RU is not)
   if (store.perfClientId && store.perfClientSecretEncoded) {
     const perfSecret = decodeKey(store.perfClientSecretEncoded);
     const now = new Date();
     const dateFrom = new Date(now.getTime() - 30 * 86_400_000).toISOString().slice(0, 10);
     const dateTo = now.toISOString().slice(0, 10);
     try {
-      const advRes = await fetch("/api/ozon/advertising", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ perfClientId: store.perfClientId, perfClientSecret: perfSecret, dateFrom, dateTo }),
-      });
-      const advData = (await advRes.json().catch(() => ({}))) as {
-        stats?: Array<{ date: string; campaignId: string; campaignName: string; charge: number }>;
-        warning?: string;
-        error?: string;
-      };
+      const { fetchAdvertisingStatsClient } = await import("./api/ozon-performance-client");
+      const advData = await fetchAdvertisingStatsClient(store.perfClientId, perfSecret, dateFrom, dateTo);
       if (advData.error) {
-        apiWarnings.push(`Реклама Performance API: ${advData.error}`);
+        apiWarnings.push(`Реклама: ${advData.error}`);
       } else {
         let advCount = 0;
-        for (const stat of advData.stats ?? []) {
+        for (const stat of advData.stats) {
           if (stat.charge > 0) {
             transactions.push({
               storeId: store.id,
@@ -221,7 +214,7 @@ async function syncOzon(
           }
         }
         if (advData.warning) apiWarnings.push(advData.warning);
-        else if (advCount === 0) apiWarnings.push("Performance API: расходов за последние 30 дней не найдено");
+        else if (advCount === 0) apiWarnings.push("Performance API: расходов не найдено");
       }
     } catch (e) {
       apiWarnings.push(`Реклама: ${(e as Error).message}`);
