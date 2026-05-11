@@ -56,6 +56,10 @@ interface OzonProductInfo {
   fbo_sku: number;
   fbs_sku: number;
   type_name: string;
+  fbo_commission_percent: number;
+  fbs_commission_percent: number;
+  fbo_delivery_amount: number;
+  fbs_delivery_amount: number;
 }
 
 interface OzonOperation {
@@ -64,9 +68,14 @@ interface OzonOperation {
   operation_date: string;
   posting: {
     posting_number: string;
+    order_date?: string;
+    delivery_schema?: string;
     items: Array<{ sku: number; name: string; offer_id?: string }>;
   };
   amount: number;
+  accruals_for_sale?: number;
+  sale_commission?: number;
+  services?: Array<{ name: string; price: number }>;
 }
 
 async function syncOzon(
@@ -106,6 +115,10 @@ async function syncOzon(
     const existing = existingBySkus.get(offerId);
     const hasRealName = p.name && p.name !== offerId;
 
+    const commissionPct = p.fbo_commission_percent || undefined;
+    const fbsCommissionPct = p.fbs_commission_percent || undefined;
+    const fbsDeliveryAmount = p.fbs_delivery_amount || undefined;
+
     if (!existing) {
       newProducts.push({
         storeId: store.id,
@@ -119,10 +132,13 @@ async function syncOzon(
         widthCm: p.width_cm,
         heightCm: p.height_cm,
         active: true,
+        commissionPct,
+        fbsCommissionPct,
+        fbsDeliveryAmount,
       });
     } else {
-      // Refresh name, price, category, dimensions from API — but never overwrite
-      // user-entered purchasePrice or active flag.
+      // Refresh name, price, category, dimensions, commission from API.
+      // Never overwrite user-entered purchasePrice.
       const patch: Partial<Product> = {};
       if (hasRealName) patch.name = p.name;
       if (p.selling_price > 0) patch.sellingPrice = p.selling_price;
@@ -131,7 +147,20 @@ async function syncOzon(
       if (p.depth_cm > 0) patch.lengthCm = p.depth_cm;
       if (p.width_cm > 0) patch.widthCm = p.width_cm;
       if (p.height_cm > 0) patch.heightCm = p.height_cm;
+      if (commissionPct) patch.commissionPct = commissionPct;
+      if (fbsCommissionPct) patch.fbsCommissionPct = fbsCommissionPct;
+      if (fbsDeliveryAmount) patch.fbsDeliveryAmount = fbsDeliveryAmount;
+      // Re-activate if it was previously deactivated but is back in the API
+      if (!existing.active) patch.active = true;
       if (Object.keys(patch).length > 0) productUpdates.push({ id: existing.id, patch });
+    }
+  }
+
+  // Deactivate products that have disappeared from the API (moved to archive).
+  const apiOfferIds = new Set(allOzonProducts.map((p) => String(p.offer_id)));
+  for (const existing of storeProducts) {
+    if (!apiOfferIds.has(existing.sku) && existing.active) {
+      productUpdates.push({ id: existing.id, patch: { active: false } });
     }
   }
 
@@ -163,14 +192,23 @@ async function syncOzon(
       .map((p) => [p.sku, p.id]),
   );
 
-  const transactions: Omit<Transaction, "id">[] = (txData.operations ?? []).map((op) => {
+  const transactions: Omit<Transaction, "id">[] = [];
+  for (const op of txData.operations ?? []) {
     const item = op.posting?.items?.[0];
     // Prefer explicit offer_id; fall back to resolving numeric listing SKU
     const offerId =
       (item?.offer_id || "") ||
       (item?.sku ? listingSkuToOfferId.get(item.sku) : undefined) ||
       "";
-    return {
+
+    const schema = op.posting?.delivery_schema;
+    const description = schema ? `${op.operation_type} (${schema})` : op.operation_type;
+    const rawData: Record<string, unknown> = {};
+    if (op.accruals_for_sale) rawData.accruals_for_sale = op.accruals_for_sale;
+    if (op.sale_commission) rawData.sale_commission = op.sale_commission;
+    if (schema) rawData.delivery_schema = schema;
+
+    transactions.push({
       storeId: store.id,
       sku: offerId || undefined,
       productId: offerId ? skuToProductId.get(offerId) || undefined : undefined,
@@ -178,20 +216,70 @@ async function syncOzon(
       date: op.operation_date ?? new Date().toISOString(),
       type: classifyOzonOperation(op.operation_type, op.amount),
       amount: op.amount,
-      description: op.operation_type,
+      description,
       source: "api",
       externalId: String(op.operation_id),
-    };
-  });
+      rawData: Object.keys(rawData).length > 0 ? rawData : undefined,
+    });
 
-  // Performance API (advertising) is currently disabled:
-  //   - Vercel servers (US/EU) are geo-blocked by Ozon's anti-bot
-  //   - Browser is blocked by CORS (Ozon API has no CORS headers)
-  // Will work once deployed to a Russian server (server-to-server).
+    // Expand embedded service fees (present in FBS operations).
+    // Each service is a separate charge not returned as a top-level operation for FBS.
+    if (op.services?.length && schema === "FBS") {
+      for (const svc of op.services) {
+        if (!svc.price) continue;
+        transactions.push({
+          storeId: store.id,
+          sku: offerId || undefined,
+          productId: offerId ? skuToProductId.get(offerId) || undefined : undefined,
+          orderId: op.posting?.posting_number ?? String(op.operation_id),
+          date: op.operation_date ?? new Date().toISOString(),
+          type: classifyOzonOperation(svc.name, svc.price),
+          amount: svc.price,
+          description: svc.name + " (FBS)",
+          source: "api",
+          externalId: `${op.operation_id}-${svc.name}`,
+        });
+      }
+    }
+  }
+
+  // Performance API (advertising expenses)
   if (store.perfClientId && store.perfClientSecretEncoded) {
-    apiWarnings.push(
-      "Реклама: Performance API доступна только при деплое на сервер в РФ (Vercel блокируется антиботом Ozon, браузер — CORS).",
-    );
+    const perfSecret = decodeKey(store.perfClientSecretEncoded);
+    const dateFrom = new Date(Date.now() - 30 * 86_400_000).toISOString().slice(0, 10);
+    const dateTo = new Date().toISOString().slice(0, 10);
+    try {
+      const perfRes = await fetch("/api/ozon/advertising", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ perfClientId: store.perfClientId, perfClientSecret: perfSecret, dateFrom, dateTo }),
+      });
+      const perfData = (await perfRes.json().catch(() => ({}))) as {
+        stats?: Array<{ date: string; campaignId: string; campaignName: string; charge: number }>;
+        warning?: string;
+        error?: string;
+      };
+      if (perfData.error) {
+        apiWarnings.push(`Реклама: ${perfData.error}`);
+      } else {
+        for (const s of perfData.stats ?? []) {
+          const externalId = `perf-${s.campaignId}-${s.date}`;
+          transactions.push({
+            storeId: store.id,
+            orderId: externalId,
+            externalId,
+            date: `${s.date}T00:00:00.000Z`,
+            type: "ADVERTISING",
+            amount: -s.charge,
+            description: `Реклама: ${s.campaignName || s.campaignId}`,
+            source: "api",
+          });
+        }
+        if (perfData.warning) apiWarnings.push(`Реклама: ${perfData.warning}`);
+      }
+    } catch (err) {
+      apiWarnings.push(`Реклама: ${(err as Error).message}`);
+    }
   }
 
   const warnings = [txData.warning, ...apiWarnings].filter(Boolean);

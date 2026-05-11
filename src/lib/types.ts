@@ -35,6 +35,12 @@ export interface Product {
   heightCm: number;
   active: boolean;
   createdAt: string;
+  /** Commission % from Ozon API — FBO schema (overrides generic tariff) */
+  commissionPct?: number;
+  /** Commission % from Ozon API — FBS schema */
+  fbsCommissionPct?: number;
+  /** Ozon FBS per-order delivery service fee (rub) — used in Method 1 FBS logistics */
+  fbsDeliveryAmount?: number;
 }
 
 export type TariffType =
@@ -124,6 +130,7 @@ export interface UnitEconomicsPlan {
   storage: number;
   acquiring: number;
   lastMile: number;
+  tax: number;
   costOfGoods: number;
   grossProfit: number;
   marginPct: number;
@@ -142,6 +149,7 @@ export interface UnitEconomicsFact {
   refunds: number;
   others: number;
   acquiring: number;
+  tax: number;
   costOfGoods: number;
   grossProfit: number;
   marginPct: number;
@@ -166,6 +174,7 @@ export interface UnitEconomicsPerUnit {
   advertising: number;
   acquiring: number;
   penalties: number;
+  tax: number;
   costOfGoods: number;
   grossProfit: number;
   marginPct: number;
@@ -176,4 +185,6 @@ export interface AppSettings {
   storageDays: number;
   defaultCurrency: "RUB";
   plan: PricingPlan;
+  /** Tax rate % applied to revenue for planning/fact (e.g. USN-6%). 0 = disabled. */
+  taxRatePct: number;
 }

@@ -26,6 +26,7 @@ export function exportProductsCsv(
   const rows = products.map((p) => {
     const plan = calculatePlan(p, tariffs, {
       storageDays: settings.storageDays,
+      taxRatePct: settings.taxRatePct ?? 0,
     });
     return {
       SKU: p.sku,
@@ -37,6 +38,7 @@ export function exportProductsCsv(
       Логистика: plan.logistics.toFixed(2),
       Хранение: plan.storage.toFixed(2),
       Эквайринг: plan.acquiring.toFixed(2),
+      ...(settings.taxRatePct ? { [`Налог ${settings.taxRatePct}%`]: plan.tax.toFixed(2) } : {}),
       Прибыль: plan.grossProfit.toFixed(2),
       "Маржа %": plan.marginPct.toFixed(1),
       "ROI %": plan.roiPct.toFixed(1),
@@ -58,6 +60,7 @@ export function exportProductsXlsx(
   const rows = products.map((p) => {
     const plan = calculatePlan(p, tariffs, {
       storageDays: settings.storageDays,
+      taxRatePct: settings.taxRatePct ?? 0,
     });
     return {
       SKU: p.sku,
@@ -69,6 +72,7 @@ export function exportProductsXlsx(
       Логистика: plan.logistics,
       Хранение: plan.storage,
       Эквайринг: plan.acquiring,
+      ...(settings.taxRatePct ? { [`Налог ${settings.taxRatePct}%`]: plan.tax } : {}),
       Прибыль: plan.grossProfit,
       "Маржа %": plan.marginPct,
       "ROI %": plan.roiPct,

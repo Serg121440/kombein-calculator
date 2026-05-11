@@ -1,88 +1,36 @@
 /**
  * Ozon Performance API client (advertising expenses).
- * Docs: https://docs.ozon.ru/api/performance/#tag/Token
+ * Docs: https://docs.ozon.ru/api/performance/
  *
- * Auth: separate OAuth2 credentials (client_id + client_secret),
- * distinct from the Seller API key. Obtain in:
- * Ozon Seller → Реклама → Продвижение → API
+ * Auth: separate credentials (client_id + client_secret) from
+ * Ozon Seller → Настройки → API-ключи → сервисный аккаунт.
+ * Host since 2025-01-15: api-performance.ozon.ru
  */
 
 import { apiFetch, parseJson } from "./http";
 
-const PERF_BASE = "https://performance.ozon.ru";
+const PERF_BASE = "https://api-performance.ozon.ru";
 
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 
-async function tokenPost(url: string, body: string, cookieJar: string[]): Promise<Response> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 30_000);
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    Accept: "application/json, text/plain, */*",
-    "Accept-Language": "ru-RU,ru;q=0.9,en;q=0.8",
-    "User-Agent":
-      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-    Origin: PERF_BASE,
-    Referer: `${PERF_BASE}/`,
-  };
-  if (cookieJar.length > 0) {
-    headers["Cookie"] = cookieJar.join("; ");
-  }
-  try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers,
-      body,
-      redirect: "manual",
-      signal: controller.signal,
-    });
-    const setCookies = (res.headers as Headers & { getSetCookie?: () => string[] }).getSetCookie?.() ?? [];
-    for (const sc of setCookies) {
-      const kv = sc.split(";")[0];
-      if (kv && !cookieJar.includes(kv)) cookieJar.push(kv);
-    }
-    return res;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 async function fetchToken(clientId: string, clientSecret: string): Promise<string> {
-  const body = JSON.stringify({ client_id: clientId, client_secret: clientSecret, grant_type: "client_credentials" });
-  const cookieJar: string[] = [];
-  const trail: string[] = [];
-  let url = `${PERF_BASE}/api/client/token`;
-  let res = await tokenPost(url, body, cookieJar);
-  trail.push(`${res.status} ${url}`);
-
-  for (let i = 0; i < 8 && res.status >= 300 && res.status < 400; i++) {
-    const location = res.headers.get("location") ?? "";
-    const next = location.startsWith("http") ? location : `${PERF_BASE}${location}`;
-    if (!next.startsWith(PERF_BASE)) {
-      throw new Error(`Токен-эндпоинт редиректит за пределы домена: ${location}`);
-    }
-    url = next;
-    res = await tokenPost(url, body, cookieJar);
-    trail.push(`${res.status} ${url.replace(PERF_BASE, "")}`);
-  }
-
-  if (res.status >= 300 && res.status < 400) {
-    throw new Error(
-      `Слишком много редиректов токен-эндпоинта. Цепочка: ${trail.join(" → ")}. Cookies=${cookieJar.length}. Vercel/прокси блокируется антибот-защитой Ozon.`,
-    );
-  }
+  const res = await apiFetch(
+    `${PERF_BASE}/api/client/token`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ client_id: clientId, client_secret: clientSecret, grant_type: "client_credentials" }),
+    },
+    { label: "ozon-perf:token", timeoutMs: 30_000, maxRetries: 1 },
+  );
 
   if (!res.ok) {
-    const text = await res.text();
-    const isHtml = text.trim().startsWith("<");
-    const snippet = isHtml ? "(HTML страница, не JSON — антибот заблокировал)" : text.slice(0, 200);
-    throw new Error(
-      `Performance API вернул ${res.status} вместо токена. Цепочка: ${trail.join(" → ")}. Cookies=${cookieJar.length}. Ответ: ${snippet}`,
-    );
+    const text = await res.text().catch(() => "");
+    throw new Error(`Performance API token: ${res.status} ${text.slice(0, 200)}`);
   }
 
   const data = await parseJson<{ access_token: string }>(res);
-  if (!data.access_token) throw new Error("Нет access_token в ответе Performance API");
+  if (!data.access_token) throw new Error("Performance API: нет access_token в ответе");
   return data.access_token;
 }
 
@@ -90,7 +38,7 @@ function perfHdrs(token: string): Record<string, string> {
   return {
     Authorization: `Bearer ${token}`,
     "Content-Type": "application/json",
-    "Client-Name": "kombein-calculator",
+    Accept: "application/json",
   };
 }
 
@@ -103,166 +51,228 @@ interface Campaign {
 }
 
 async function fetchCampaigns(token: string): Promise<Campaign[]> {
-  const paths = [
-    "/api/client/campaign",
-    "/api/client/campaigns",
-    "/api/client/campaign/list",
-  ];
-  for (const path of paths) {
-    try {
-      const res = await apiFetch(
-        `${PERF_BASE}${path}`,
-        { method: "GET", headers: perfHdrs(token) },
-        { label: `ozon-perf:campaign${path}`, maxRetries: 0 },
-      );
-      if (!res.ok) continue;
-      const data = await res.json() as { list?: Campaign[]; campaigns?: Campaign[]; items?: Campaign[] };
-      const list = data.list ?? data.campaigns ?? data.items ?? [];
-      if (Array.isArray(list)) return list;
-    } catch {
-      continue;
-    }
+  try {
+    const res = await apiFetch(
+      `${PERF_BASE}/api/client/campaign`,
+      { method: "GET", headers: perfHdrs(token) },
+      { label: "ozon-perf:campaigns", maxRetries: 0 },
+    );
+    if (!res.ok) return [];
+    const data = await res.json() as { list?: Campaign[] };
+    return data.list ?? [];
+  } catch {
+    return [];
   }
-  return [];
 }
 
-// ─── Statistics: try multiple endpoint variants ───────────────────────────────
+// ─── Statistics ───────────────────────────────────────────────────────────────
 
 export interface PerfDayStat {
   date: string;
   campaignId: string;
   campaignName: string;
-  /** Total advertising spend for the day, RUB */
   charge: number;
   orders: number;
 }
 
-/** Extract spend amount from a raw stat row — tries all known field names */
-function extractCharge(r: Record<string, unknown>): number {
-  const candidates = [
-    r["charge"],
-    r["moneySpent"],
-    r["spent"],
-    r["sum"],
-    r["cost"],
-    r["expenses"],
-    r["totalCharge"],
-    r["spend"],
-    r["views"] !== undefined ? undefined : undefined, // not a spend field
-  ];
-  for (const v of candidates) {
-    const n = Number(v);
-    if (v !== undefined && v !== null && v !== "" && Number.isFinite(n) && n > 0) return n;
+function campaignIdsQuery(ids: string[]): string {
+  return ids.map((id) => `campaignIds=${encodeURIComponent(id)}`).join("&");
+}
+
+function parsePerfCsv(text: string, dateFrom: string, dateTo: string, fallbackCampaignId: string): PerfDayStat[] {
+  const lines = text.split(/\r?\n/).filter((l) => l.trim() && !l.startsWith(";"));
+  if (lines.length < 2) return [];
+
+  const headers = lines[0].split(";").map((h) => h.trim().toLowerCase());
+  const dateIdx = headers.findIndex((h) => h.includes("дата") || h === "date");
+  const chargeIdx = headers.findIndex((h) =>
+    h.includes("расход") || h.includes("charge") || h.includes("spent") || h.includes("стоимость"),
+  );
+  const ordersIdx = headers.findIndex((h) => h.includes("заказ") || h === "orders");
+  const nameIdx = headers.findIndex((h) => h.includes("кампани") || h.includes("название") || h === "name");
+  const idIdx = headers.findIndex((h) => h === "id" || h === "campaign_id");
+
+  console.log(`[ozon-perf] csv headers=${headers.join("|")} chargeIdx=${chargeIdx} dateIdx=${dateIdx}`);
+
+  const stats: PerfDayStat[] = [];
+  for (let i = 1; i < lines.length; i++) {
+    const cols = lines[i].split(";").map((c) => c.trim().replace(/,/g, "."));
+    const rawDate = dateIdx >= 0 ? (cols[dateIdx] ?? "") : "";
+    // Dates may be DD.MM.YYYY — convert to YYYY-MM-DD
+    const date = rawDate.includes(".")
+      ? rawDate.split(".").reverse().join("-").slice(0, 10)
+      : rawDate.slice(0, 10);
+    const chargeRaw = chargeIdx >= 0 ? parseFloat(cols[chargeIdx] ?? "0") : 0;
+    const cid = idIdx >= 0 ? (cols[idIdx] ?? fallbackCampaignId) : fallbackCampaignId;
+    const name = nameIdx >= 0 ? (cols[nameIdx] ?? "") : "";
+    const orders = ordersIdx >= 0 ? parseInt(cols[ordersIdx] ?? "0", 10) : 0;
+
+    if (chargeRaw > 0 && (!date || (date >= dateFrom && date <= dateTo))) {
+      stats.push({ date: date || dateFrom, campaignId: cid, campaignName: name, charge: chargeRaw, orders });
+    }
   }
-  return 0;
+  return stats;
 }
 
-function extractDate(r: Record<string, unknown>, fallback: string): string {
-  const raw = String(r["date"] ?? r["eventDate"] ?? r["day"] ?? fallback);
-  return raw.slice(0, 10);
-}
+// ─── Async report: generate → poll status → download ─────────────────────────
 
-function extractCampaignId(r: Record<string, unknown>): string {
-  return String(r["campaignId"] ?? r["campaign_id"] ?? r["id"] ?? "");
-}
-
-async function tryStatEndpoint(
+async function generateReport(
   token: string,
-  url: string,
-  init: RequestInit,
-  label: string,
+  campaignIds: string[],
   dateFrom: string,
   dateTo: string,
-): Promise<{ stats: PerfDayStat[]; rawDebug: unknown } | null> {
+): Promise<string | null> {
   try {
-    const res = await apiFetch(url, { ...init, headers: perfHdrs(token) }, { label, timeoutMs: 45_000 });
-    if (!res.ok) return null;
-    const raw = await res.json() as Record<string, unknown>;
-
-    // Find an array of stat rows anywhere in the response
-    let rows: Record<string, unknown>[] = [];
-    for (const key of ["rows", "items", "data", "list", "statistics", "stats", "result"]) {
-      if (Array.isArray(raw[key])) {
-        rows = raw[key] as Record<string, unknown>[];
-        break;
-      }
+    const res = await apiFetch(
+      `${PERF_BASE}/api/client/statistics`,
+      {
+        method: "POST",
+        headers: perfHdrs(token),
+        body: JSON.stringify({ campaigns: campaignIds, dateFrom, dateTo, groupBy: "DATE" }),
+      },
+      { label: "ozon-perf:statistics/generate", timeoutMs: 30_000, maxRetries: 0 },
+    );
+    if (!res.ok) {
+      console.log(`[ozon-perf] generate http=${res.status}`);
+      return null;
     }
-    if (rows.length === 0 && Array.isArray(raw)) {
-      rows = raw as Record<string, unknown>[];
-    }
-
-    const stats: PerfDayStat[] = rows
-      .map((r) => ({
-        date: extractDate(r, dateFrom),
-        campaignId: extractCampaignId(r),
-        campaignName: "",
-        charge: extractCharge(r),
-        orders: Number(r["orders"] ?? r["orderCount"] ?? 0),
-      }))
-      .filter((s) => s.date >= dateFrom && s.date <= dateTo && s.charge > 0);
-
-    return { stats, rawDebug: raw };
-  } catch {
+    const data = await res.json() as { UUID?: string };
+    console.log(`[ozon-perf] generate UUID=${data.UUID}`);
+    return data.UUID ?? null;
+  } catch (e) {
+    console.log(`[ozon-perf] generate error: ${(e as Error).message}`);
     return null;
   }
 }
+
+async function pollAndDownload(
+  token: string,
+  uuid: string,
+  dateFrom: string,
+  dateTo: string,
+  batchCampaignId: string,
+): Promise<PerfDayStat[]> {
+  // Step 1: Poll GET /api/client/statistics/{UUID} for status + link
+  for (let i = 0; i < 20; i++) {
+    await new Promise((r) => setTimeout(r, 2000));
+    try {
+      const statusRes = await apiFetch(
+        `${PERF_BASE}/api/client/statistics/${uuid}`,
+        { method: "GET", headers: perfHdrs(token) },
+        { label: "ozon-perf:status", timeoutMs: 15_000, maxRetries: 0 },
+      );
+      if (!statusRes.ok) {
+        console.log(`[ozon-perf] status ${uuid} http=${statusRes.status}`);
+        continue;
+      }
+      const status = await statusRes.json() as { state?: string; link?: string; error?: string };
+      console.log(`[ozon-perf] status ${uuid} attempt=${i + 1} state=${status.state} link=${status.link}`);
+
+      if (status.state === "IN_PROGRESS" || status.state === "NOT_STARTED") continue;
+      if (status.state === "ERROR") {
+        console.log(`[ozon-perf] report error: ${status.error}`);
+        return [];
+      }
+      if (status.state !== "OK") continue;
+
+      // Step 2: Download report
+      const downloadUrl = status.link
+        ? (status.link.startsWith("http") ? status.link : `${PERF_BASE}${status.link}`)
+        : `${PERF_BASE}/api/client/statistics/report?UUID=${uuid}`;
+
+      const dlRes = await apiFetch(
+        downloadUrl,
+        { method: "GET", headers: { Authorization: `Bearer ${token}` } },
+        { label: "ozon-perf:download", timeoutMs: 30_000, maxRetries: 0 },
+      );
+      if (!dlRes.ok) {
+        console.log(`[ozon-perf] download http=${dlRes.status}`);
+        return [];
+      }
+      const ct = dlRes.headers.get("content-type") ?? "";
+      console.log(`[ozon-perf] download ct=${ct}`);
+
+      if (ct.includes("zip")) {
+        // ZIP with multiple CSV files — we'd need a zip parser; skip for now
+        console.log(`[ozon-perf] ZIP response — skipping (need single-campaign batches)`);
+        return [];
+      }
+
+      const text = await dlRes.text();
+      return parsePerfCsv(text, dateFrom, dateTo, batchCampaignId);
+    } catch (e) {
+      console.log(`[ozon-perf] poll ${uuid} attempt=${i + 1} error=${(e as Error).message}`);
+    }
+  }
+  console.log(`[ozon-perf] poll ${uuid} timed out`);
+  return [];
+}
+
+// ─── Main stats fetcher ───────────────────────────────────────────────────────
 
 async function fetchStats(
   token: string,
   campaignIds: string[],
   dateFrom: string,
   dateTo: string,
-): Promise<{ stats: PerfDayStat[]; rawDebug?: unknown; warning?: string }> {
-  const idList = campaignIds.join(",");
+): Promise<{ stats: PerfDayStat[]; warning?: string }> {
+  const idQuery = campaignIdsQuery(campaignIds);
 
-  // Try endpoints in order of likelihood
-  const attempts = [
-    // 1. Daily stats GET with date params
-    {
-      url: `${PERF_BASE}/api/client/statistics/daily?dateFrom=${dateFrom}&dateTo=${dateTo}`,
-      init: { method: "GET" } as RequestInit,
-      label: "ozon-perf:statistics/daily",
-    },
-    // 2. Statistics POST (report-style)
-    {
-      url: `${PERF_BASE}/api/client/statistics`,
-      init: {
-        method: "POST",
-        body: JSON.stringify({ campaigns: campaignIds, dateFrom, dateTo, groupBy: "DATE" }),
-      } as RequestInit,
-      label: "ozon-perf:statistics",
-    },
-    // 3. Statistics with campaign ids in query
-    {
-      url: `${PERF_BASE}/api/client/statistics/daily?campaigns=${idList}&dateFrom=${dateFrom}&dateTo=${dateTo}`,
-      init: { method: "GET" } as RequestInit,
-      label: "ozon-perf:statistics/daily-ids",
-    },
-    // 4. JSON report endpoint
-    {
-      url: `${PERF_BASE}/api/client/statistics/json`,
-      init: {
-        method: "POST",
-        body: JSON.stringify({ campaigns: campaignIds, dateFrom, dateTo }),
-      } as RequestInit,
-      label: "ozon-perf:statistics/json",
-    },
-  ];
-
-  for (const a of attempts) {
-    const result = await tryStatEndpoint(token, a.url, a.init, a.label, dateFrom, dateTo);
-    if (result !== null) {
-      if (result.stats.length > 0) return result;
-      // Endpoint responded but no charge > 0 — return with debug
-      return {
-        stats: [],
-        rawDebug: result.rawDebug,
-        warning: `Performance API ответил, но нет расходов > 0. Ответ: ${JSON.stringify(result.rawDebug).slice(0, 300)}`,
-      };
+  // 1. Sync expense/json endpoint — daily spend per campaign, direct JSON response
+  for (const path of [
+    `/api/client/statistics/expense/json?${idQuery}&dateFrom=${dateFrom}&dateTo=${dateTo}`,
+    `/api/client/statistics/daily/json?${idQuery}&dateFrom=${dateFrom}&dateTo=${dateTo}`,
+  ]) {
+    try {
+      const res = await apiFetch(
+        `${PERF_BASE}${path}`,
+        { method: "GET", headers: perfHdrs(token) },
+        { label: "ozon-perf:sync", timeoutMs: 30_000, maxRetries: 0 },
+      );
+      if (!res.ok) continue;
+      const raw = await res.json() as unknown;
+      // Response: { rows: [{ id, date, title, moneySpent, bonusSpent, ... }] }
+      // or daily: { rows: [{ id, date, title, shows, clicks, expense, orders }] }
+      const rows = Array.isArray(raw) ? raw as Record<string, unknown>[]
+        : raw && typeof raw === "object" ? (Object.values(raw as Record<string, unknown>).find(Array.isArray) as Record<string, unknown>[] ?? [])
+        : [];
+      if (rows.length > 0) {
+        const stats: PerfDayStat[] = rows
+          .map((r) => {
+            // moneySpent uses Russian comma decimal ("37666,70")
+            const parseRub = (v: unknown) => parseFloat(String(v ?? "0").replace(",", ".")) || 0;
+            const charge = parseRub(r["moneySpent"]) || parseRub(r["expense"]) || parseRub(r["расход"]) || parseRub(r["charge"]);
+            const rawDate = String(r["date"] ?? r["дата"] ?? dateFrom);
+            const date = rawDate.includes(".") ? rawDate.split(".").reverse().join("-").slice(0, 10) : rawDate.slice(0, 10);
+            return {
+              date,
+              campaignId: String(r["id"] ?? r["campaignId"] ?? ""),
+              campaignName: String(r["title"] ?? r["campaignName"] ?? ""),
+              charge,
+              orders: Number(r["orders"] ?? r["заказы"] ?? 0),
+            };
+          })
+          .filter((s) => s.charge > 0 && s.date >= dateFrom && s.date <= dateTo);
+        if (stats.length > 0) return { stats };
+      }
+    } catch (e) {
+      console.log(`[ozon-perf] sync error: ${(e as Error).message}`);
     }
   }
 
-  return { stats: [], warning: "Все варианты endpoint'ов Performance API не ответили" };
+  // 2. Async: POST /api/client/statistics → poll status → download CSV
+  // Send one campaign at a time to get CSV (not ZIP)
+  const allStats: PerfDayStat[] = [];
+  for (const campaignId of campaignIds.slice(0, 10)) {
+    const uuid = await generateReport(token, [campaignId], dateFrom, dateTo);
+    if (!uuid) continue;
+    const stats = await pollAndDownload(token, uuid, dateFrom, dateTo, campaignId);
+    allStats.push(...stats);
+    if (allStats.length > 0) break; // enough for now — confirm it works first
+  }
+
+  if (allStats.length > 0) return { stats: allStats };
+  return { stats: [], warning: "Performance API: нет данных о рекламных расходах за период" };
 }
 
 // ─── Public entry point ───────────────────────────────────────────────────────
@@ -276,10 +286,8 @@ export async function fetchAdvertisingStats(
   const token = await fetchToken(clientId, clientSecret);
   const campaigns = await fetchCampaigns(token);
 
-  // Even with 0 campaigns (endpoint 404 or empty account), try fetching stats —
-  // some statistics endpoints don't require campaign IDs.
   const activeCampaignIds = campaigns
-    .filter((c) => c.state !== "ARCHIVED" && c.state !== "STOPPED")
+    .filter((c) => c.state !== "CAMPAIGN_STATE_ARCHIVED" && c.state !== "CAMPAIGN_STATE_INACTIVE")
     .map((c) => c.id);
   const campaignIds = activeCampaignIds.length > 0 ? activeCampaignIds : campaigns.map((c) => c.id);
 
@@ -287,7 +295,7 @@ export async function fetchAdvertisingStats(
 
   const nameMap = new Map(campaigns.map((c) => [c.id, c.title]));
   for (const s of result.stats) {
-    s.campaignName = nameMap.get(s.campaignId) ?? s.campaignId;
+    if (!s.campaignName) s.campaignName = nameMap.get(s.campaignId) ?? s.campaignId;
   }
 
   console.log(`[ozon-perf] campaigns=${campaigns.length} active=${campaignIds.length} stats=${result.stats.length}`);

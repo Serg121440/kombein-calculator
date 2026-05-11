@@ -49,6 +49,25 @@ export default function SettingsPage() {
           </select>
         </div>
         <div>
+          <label className="label">Ставка налога (УСН), %</label>
+          <input
+            className="input"
+            type="number"
+            min={0}
+            max={20}
+            step={0.1}
+            value={settings.taxRatePct ?? 0}
+            onChange={(e) =>
+              updateSettings({
+                taxRatePct: Math.max(0, parseFloat(e.target.value) || 0),
+              })
+            }
+          />
+          <p className="text-xs text-gray-500 mt-1">
+            Рассчитывается от выручки. 0 — налог не учитывается. Например: УСН-6% → введите 6.
+          </p>
+        </div>
+        <div>
           <label className="label">Валюта</label>
           <input className="input" value="RUB" disabled />
           <p className="text-xs text-gray-500 mt-1">

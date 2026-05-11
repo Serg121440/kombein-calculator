@@ -31,6 +31,7 @@ export default function ProductPage() {
   const stores = useAppStore((s) => s.stores);
 
   const [model, setModel] = useState<EconomicsModel>("MODEL2");
+  const [schema, setSchema] = useState<"FBO" | "FBS">("FBS");
   const [periodKey, setPeriodKey] = useState<PeriodKey>("30d");
   const [customFrom, setCustomFrom] = useState<string>("");
   const [customTo, setCustomTo] = useState<string>("");
@@ -52,9 +53,10 @@ export default function ProductPage() {
     );
   }
 
+  const taxRatePct = settings.taxRatePct ?? 0;
   const store = stores.find((s) => s.id === product.storeId);
-  const plan = calculatePlan(product, tariffs, { storageDays: settings.storageDays });
-  const fact = model !== "MODEL1" ? calculateFact(product, transactions, period) : null;
+  const plan = calculatePlan(product, tariffs, { storageDays: settings.storageDays, schema, taxRatePct });
+  const fact = model !== "MODEL1" ? calculateFact(product, transactions, period, taxRatePct) : null;
 
   const perUnit =
     model === "MODEL2" && fact
@@ -81,6 +83,20 @@ export default function ProductPage() {
                 onCustomChange={(f, t) => { setCustomFrom(f); setCustomTo(t); }}
               />
             )}
+            <div className="flex items-center gap-1 rounded-lg border border-gray-200 bg-white p-0.5 text-sm">
+              <button
+                className={`px-3 py-1 rounded-md font-medium transition-colors ${schema === "FBS" ? "bg-brand-600 text-white" : "text-gray-600 hover:bg-gray-100"}`}
+                onClick={() => setSchema("FBS")}
+              >
+                ФБС
+              </button>
+              <button
+                className={`px-3 py-1 rounded-md font-medium transition-colors ${schema === "FBO" ? "bg-brand-600 text-white" : "text-gray-600 hover:bg-gray-100"}`}
+                onClick={() => setSchema("FBO")}
+              >
+                ФБО
+              </button>
+            </div>
             <ModelPicker value={model} onChange={setModel} />
           </div>
         }
@@ -140,20 +156,29 @@ export default function ProductPage() {
 
         {/* Plan card — always visible */}
         <div className="card p-4">
-          <div className="text-xs uppercase text-gray-500">
-            М1 — план (на 1 шт)
+          <div className="text-xs uppercase text-gray-500 mb-2">
+            М1 — план {schema} (на 1 шт)
           </div>
-          <dl className="mt-2 space-y-1 text-sm">
+          <dl className="space-y-1 text-sm">
+            <SectionLabel label="Продажи" />
             <Row label="Выручка" value={formatRub(plan.revenue)} />
-            <Row label="Комиссия" value={`− ${formatRub(plan.commission)}`} />
-            <Row label="Логистика" value={`− ${formatRub(plan.logistics)}`} />
-            <Row label="Хранение" value={`− ${formatRub(plan.storage)}`} />
-            <Row label="Эквайринг" value={`− ${formatRub(plan.acquiring)}`} />
-            <Row label="Последняя миля" value={`− ${formatRub(plan.lastMile)}`} />
-            <Row label="Себестоимость" value={`− ${formatRub(plan.costOfGoods)}`} />
-            <hr />
+            <Row label="− Комиссия Ozon" value={formatRub(plan.commission)} neg />
+            {plan.acquiring > 0 && <Row label="− Эквайринг" value={formatRub(plan.acquiring)} neg />}
+            <SectionLabel label="Доставка и хранение" />
+            <Row label="− Логистика" value={formatRub(plan.logistics)} neg warn={schema === "FBS" && plan.logistics === 0} />
+            {plan.lastMile > 0 && <Row label="− Последняя миля" value={formatRub(plan.lastMile)} neg />}
+            <Row label="− Хранение" value={formatRub(plan.storage)} neg />
+            {taxRatePct > 0 && (
+              <>
+                <SectionLabel label={`Налоги (УСН ${taxRatePct}%)`} />
+                <Row label="− Налог" value={formatRub(plan.tax)} neg />
+              </>
+            )}
+            <SectionLabel label="Итог" />
+            <Row label="− Себестоимость" value={formatRub(plan.costOfGoods)} neg />
+            <hr className="my-1 border-gray-200" />
             <Row
-              label="Прибыль"
+              label="Прибыль/шт"
               value={formatRub(plan.grossProfit)}
               strong
               tone={plan.grossProfit >= 0 ? "good" : "bad"}
@@ -161,30 +186,52 @@ export default function ProductPage() {
             <Row label="Маржа" value={formatPct(plan.marginPct)} />
             <Row label="ROI" value={formatPct(plan.roiPct)} />
           </dl>
+          {schema === "FBS" && plan.logistics === 0 && (
+            <p className="mt-2 text-xs text-amber-600">
+              ⚠ Логистика ФБС не рассчитана — добавьте тариф в разделе Тарифы.
+            </p>
+          )}
         </div>
 
         {/* Fact card — MODEL2 / MODEL3 */}
         {fact ? (
           <div className="card p-4">
-            <div className="text-xs uppercase text-gray-500">
+            <div className="text-xs uppercase text-gray-500 mb-2">
               {model === "MODEL2" ? "М2" : "М3"} — факт за {period.label}
             </div>
-            <dl className="mt-2 space-y-1 text-sm">
-              <Row label="Продано шт." value={String(fact.unitsSold)} />
-              <Row label="Выкуплено шт." value={String(fact.unitsRedeemed)} />
-              <Row label="Выручка (итого)" value={formatRub(fact.revenue)} />
-              <Row label="Комиссия" value={`− ${formatRub(fact.commission)}`} />
-              <Row label="Логистика" value={`− ${formatRub(fact.logistics)}`} />
-              <Row label="Хранение" value={`− ${formatRub(fact.storage)}`} />
+            <dl className="space-y-1 text-sm">
+              <SectionLabel label="Объём продаж" />
+              <Row label="Заказано" value={`${fact.unitsSold + (fact.unitsRedeemed > fact.unitsSold ? 0 : fact.unitsSold - fact.unitsRedeemed)} шт`} />
+              <Row label="Доставлено" value={`${fact.unitsRedeemed} шт`} />
+              <Row label="Возвращено" value={`${fact.unitsSold - fact.unitsRedeemed} шт`} />
+              <SectionLabel label="Продажи (итого за период)" />
+              <Row label="Выручка" value={formatRub(fact.revenue)} />
+              <Row label="− Комиссия Ozon" value={formatRub(fact.commission)} neg />
+              {fact.acquiring > 0 && <Row label="− Эквайринг" value={formatRub(fact.acquiring)} neg />}
+              <SectionLabel label="Доставка и хранение" />
+              <Row label="− Логистика" value={formatRub(fact.logistics)} neg />
+              <Row label="− Хранение" value={formatRub(fact.storage)} neg />
+              <SectionLabel label="Возвраты и штрафы" />
+              <Row label="− Возвраты" value={formatRub(fact.refunds)} neg />
+              <Row label="− Штрафы" value={formatRub(fact.penalties)} neg />
+              {fact.others > 0 && <Row label="− Прочие расходы" value={formatRub(fact.others)} neg />}
               {fact.advertising > 0 && (
-                <Row label="Реклама" value={`− ${formatRub(fact.advertising)}`} />
+                <>
+                  <SectionLabel label="Реклама" />
+                  <Row label="− Реклама" value={formatRub(fact.advertising)} neg />
+                </>
               )}
-              <Row label="Штрафы" value={`− ${formatRub(fact.penalties)}`} />
-              <Row label="Возвраты" value={`− ${formatRub(fact.refunds)}`} />
-              <Row label="Себестоимость" value={`− ${formatRub(fact.costOfGoods)}`} />
-              <hr />
+              {taxRatePct > 0 && (
+                <>
+                  <SectionLabel label={`Налоги (УСН ${taxRatePct}%)`} />
+                  <Row label="− Налог" value={formatRub(fact.tax)} neg />
+                </>
+              )}
+              <SectionLabel label="Итог" />
+              <Row label="− Себестоимость" value={formatRub(fact.costOfGoods)} neg />
+              <hr className="my-1 border-gray-200" />
               <Row
-                label="Прибыль (итого)"
+                label="Прибыль (период)"
                 value={formatRub(fact.grossProfit)}
                 strong
                 tone={fact.grossProfit >= 0 ? "good" : "bad"}
@@ -257,6 +304,15 @@ export default function ProductPage() {
                     deltaTone="positiveBad"
                   />
                 )}
+                {taxRatePct > 0 && (
+                  <CompareRow
+                    label={`Налог (${taxRatePct}%)`}
+                    plan={plan.tax}
+                    fact={perUnit.tax}
+                    delta={deltas.tax ?? 0}
+                    deltaTone="positiveBad"
+                  />
+                )}
                 <CompareRow
                   label="Прибыль"
                   plan={plan.grossProfit}
@@ -310,27 +366,38 @@ function Row({
   value,
   strong,
   tone,
+  neg,
+  warn,
 }: {
   label: string;
   value: string;
   strong?: boolean;
   tone?: "good" | "bad";
+  neg?: boolean;
+  warn?: boolean;
 }) {
+  const valueClass =
+    tone === "good"
+      ? "text-emerald-700"
+      : tone === "bad"
+        ? "text-rose-700"
+        : neg
+          ? "text-gray-700"
+          : "text-gray-900";
   return (
     <div className="flex justify-between">
-      <dt className="text-gray-600">{label}</dt>
-      <dd
-        className={
-          (strong ? "font-semibold " : "") +
-          (tone === "good"
-            ? "text-emerald-700"
-            : tone === "bad"
-              ? "text-rose-700"
-              : "text-gray-900")
-        }
-      >
-        {value}
+      <dt className={warn ? "text-amber-600" : "text-gray-600"}>{label}{warn ? " ⚠" : ""}</dt>
+      <dd className={(strong ? "font-semibold " : "") + valueClass}>
+        {neg ? `− ${value}` : value}
       </dd>
+    </div>
+  );
+}
+
+function SectionLabel({ label }: { label: string }) {
+  return (
+    <div className="pt-2 pb-0.5">
+      <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">{label}</span>
     </div>
   );
 }
