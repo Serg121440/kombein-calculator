@@ -179,13 +179,16 @@ export function calculatePlan(
   const commission = revenue > 0 ? (revenue * commissionPct) / 100 : 0;
   const acquiring = acquiringTariff ? (revenue * acquiringTariff.value) / 100 : 0;
 
-  // Logistics: manual tariff always wins; FBO table only for FBO schema; FBS = 0 if no tariff
+  // Logistics: manual tariff always wins; then schema-specific defaults
   let logistics: number;
   if (logisticsTariff) {
     logistics = applyLogisticsTariff(logisticsTariff, product);
   } else if (schema === "FBO" && product.commissionPct) {
-    // FBO: use embedded Ozon volume-based tariff table (Тарифы по умолчанию, May 2025)
+    // FBO: embedded Ozon volume-based tariff table (Тарифы по умолчанию, May 2025)
     logistics = ozonFboDelivery(productVolumeLiters(product), revenue);
+  } else if (schema === "FBS" && product.fbsDeliveryAmount) {
+    // FBS: per-order delivery service fee from Ozon API
+    logistics = product.fbsDeliveryAmount;
   } else {
     logistics = 0;
   }

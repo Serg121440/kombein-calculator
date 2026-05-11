@@ -39,6 +39,8 @@ export interface Product {
   commissionPct?: number;
   /** Commission % from Ozon API — FBS schema */
   fbsCommissionPct?: number;
+  /** Ozon FBS per-order delivery service fee (rub) — used in Method 1 FBS logistics */
+  fbsDeliveryAmount?: number;
 }
 
 export type TariffType =

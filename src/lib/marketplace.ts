@@ -117,6 +117,7 @@ async function syncOzon(
 
     const commissionPct = p.fbo_commission_percent || undefined;
     const fbsCommissionPct = p.fbs_commission_percent || undefined;
+    const fbsDeliveryAmount = p.fbs_delivery_amount || undefined;
 
     if (!existing) {
       newProducts.push({
@@ -133,6 +134,7 @@ async function syncOzon(
         active: true,
         commissionPct,
         fbsCommissionPct,
+        fbsDeliveryAmount,
       });
     } else {
       // Refresh name, price, category, dimensions, commission from API.
@@ -147,6 +149,7 @@ async function syncOzon(
       if (p.height_cm > 0) patch.heightCm = p.height_cm;
       if (commissionPct) patch.commissionPct = commissionPct;
       if (fbsCommissionPct) patch.fbsCommissionPct = fbsCommissionPct;
+      if (fbsDeliveryAmount) patch.fbsDeliveryAmount = fbsDeliveryAmount;
       // Re-activate if it was previously deactivated but is back in the API
       if (!existing.active) patch.active = true;
       if (Object.keys(patch).length > 0) productUpdates.push({ id: existing.id, patch });
