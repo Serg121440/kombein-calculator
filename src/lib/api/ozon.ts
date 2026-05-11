@@ -37,14 +37,17 @@ interface ListItem {
   offer_id: string;
 }
 
+interface InfoItemSource {
+  sku: number;
+  source: string; // "fbo" | "fbs"
+}
+
 interface InfoItem {
   id: number;
   offer_id: string;
   name: string;
-  /** FBO listing SKU — matches sku field in finance/transaction/list items */
-  fbo_sku?: number;
-  /** FBS listing SKU — matches sku field in finance/transaction/list items */
-  fbs_sku?: number;
+  /** FBO/FBS SKUs live in sources[], not as direct fields */
+  sources?: InfoItemSource[];
   depth: number;
   width: number;
   height: number;
@@ -53,7 +56,6 @@ interface InfoItem {
   weight_unit?: string;
   type_id?: number;
   description_category_id?: number;
-  /** Selling price returned directly in product/info/list response */
   price?: string;
   min_price?: string;
   old_price?: string;
@@ -63,14 +65,17 @@ interface CategoryTreeNode {
   description_category_id: number;
   category_name: string;
   disabled?: boolean;
+  /** type_id / type_name are flat fields on each node (not a nested array) */
+  type_id?: number;
+  type_name?: string;
   children?: CategoryTreeNode[];
-  type?: Array<{ type_id: number; type_name: string; disabled?: boolean }>;
 }
 
+/** v5/product/info/prices — prices are numbers, not strings */
 interface PriceItem {
   product_id: number;
   offer_id: string;
-  price: { price: string; min_price?: string };
+  price: { price: number; min_price?: number };
 }
 
 export interface OzonOperation {
@@ -79,7 +84,7 @@ export interface OzonOperation {
   operation_date: string;
   posting: {
     posting_number: string;
-    order_id?: number;
+    order_date?: string;
     delivery_schema?: string;
     items: Array<{ sku: number; name: string; offer_id?: string }>;
   };
@@ -147,6 +152,8 @@ async function fetchProductIds(
 }
 
 // ─── Product info — batched ───────────────────────────────────────────────────
+// NOTE: /v3/product/info/list response has NO "result" wrapper —
+// items are at the top level: { items: [...] }
 
 async function fetchProductInfo(
   apiKey: string,
@@ -169,25 +176,26 @@ async function fetchProductInfo(
       },
       { label: "ozon:product/info/list" },
     );
-    // Log raw response on first batch to diagnose structure issues
     const rawText = await res.text();
     if (i === 0) {
-      console.log(`[ozon:product/info] raw (first 600): ${rawText.slice(0, 600)}`);
+      console.log(`[ozon:product/info] raw (first 400): ${rawText.slice(0, 400)}`);
     }
-    let data: { result?: { items?: InfoItem[] } };
+    let parsed: unknown;
     try {
-      data = JSON.parse(rawText) as typeof data;
+      parsed = JSON.parse(rawText);
     } catch {
       throw new Error(`Некорректный JSON от product/info/list: ${rawText.slice(0, 200)}`);
     }
     if (!res.ok) {
-      const msg = (data as Record<string, unknown>).message ?? rawText.slice(0, 300);
+      const msg = (parsed as Record<string, unknown>).message ?? rawText.slice(0, 300);
       throw new Error(`[${res.status}] product/info/list: ${msg}`);
     }
-    const items = data.result?.items ?? [];
+    // Response has NO "result" wrapper — items at top level: { items: [...] }
+    const data = parsed as { items?: InfoItem[] };
+    const items = data.items ?? [];
     console.log(
       `[ozon:product/info] batch=${batch.length} got=${items.length}` +
-      (items[0] ? ` first={id:${items[0].id},name:${JSON.stringify(items[0].name)}}` : ""),
+      (items[0] ? ` first={id:${items[0].id},name:${JSON.stringify(items[0].name)},sources:${items[0].sources?.length ?? 0}}` : ""),
     );
     all.push(...items);
     if (i + INFO_BATCH < productIds.length) await sleep(REQUEST_GAP_MS);
@@ -196,7 +204,9 @@ async function fetchProductInfo(
   return all;
 }
 
-// ─── Product prices — cursor pagination ──────────────────────────────────────
+// ─── Product prices — v5 cursor pagination ────────────────────────────────────
+// NOTE: /v5/product/info/prices response has NO "result" wrapper —
+// items at top level: { cursor, items, total }. Prices are numbers (not strings).
 
 async function fetchProductPrices(
   apiKey: string,
@@ -204,27 +214,28 @@ async function fetchProductPrices(
 ): Promise<PriceItem[]> {
   const h = hdrs(apiKey, clientId);
   const all: PriceItem[] = [];
-  let lastId = "";
+  let cursor = "";
 
   for (;;) {
     const res = await apiFetch(
-      `${BASE}/v4/product/info/prices`,
+      `${BASE}/v5/product/info/prices`,
       {
         method: "POST",
         headers: h,
         body: JSON.stringify({
-          filter: { visibility: "ALL" },
-          last_id: lastId,
+          filter: { visibility: "ALL", offer_id: [], product_id: [] },
+          cursor,
           limit: PAGE_SIZE,
         }),
       },
       { label: "ozon:product/info/prices" },
     );
-    const data = await parseJson<{ result: { items: PriceItem[]; last_id: string } }>(res);
-    const items = data.result?.items ?? [];
+    // Response: { cursor: "...", items: [...], total: N } — no "result" wrapper
+    const data = await parseJson<{ cursor: string; items: PriceItem[]; total: number }>(res);
+    const items = data.items ?? [];
     all.push(...items);
-    lastId = data.result?.last_id ?? "";
-    if (items.length < PAGE_SIZE || !lastId) break;
+    cursor = data.cursor ?? "";
+    if (items.length < PAGE_SIZE || !cursor) break;
     await sleep(REQUEST_GAP_MS);
   }
 
@@ -291,11 +302,12 @@ export async function fetchTransactions(
 }
 
 // ─── Category tree → type_id → type_name map ─────────────────────────────────
+// NOTE: type_id / type_name are FLAT fields on each node, not a nested type[] array.
 
 function flattenTypeNames(nodes: CategoryTreeNode[], out: Map<number, string>): void {
   for (const node of nodes) {
-    for (const t of node.type ?? []) {
-      if (!t.disabled) out.set(t.type_id, t.type_name);
+    if (node.type_id && node.type_name && !node.disabled) {
+      out.set(node.type_id, node.type_name);
     }
     if (node.children?.length) flattenTypeNames(node.children, out);
   }
@@ -319,6 +331,7 @@ async function fetchTypeNameMap(
     const data = await parseJson<{ result: CategoryTreeNode[] }>(res);
     const map = new Map<number, string>();
     flattenTypeNames(data.result ?? [], map);
+    console.log(`[ozon:category/tree] type_name entries: ${map.size}`);
     return map;
   } catch (e: unknown) {
     console.warn("[ozon] category/tree failed (non-fatal):", (e as Error).message);
@@ -342,7 +355,6 @@ export async function fetchAllProducts(
       warnings.push(`Названия/габариты недоступны: ${e.message}`);
       return [] as InfoItem[];
     }),
-    // /v4/product/info/prices is optional — prices also embedded in info response
     fetchProductPrices(apiKey, clientId).catch(() => [] as PriceItem[]),
     fetchTypeNameMap(apiKey, clientId),
   ]);
@@ -365,16 +377,20 @@ export async function fetchAllProducts(
     const dimF = dimUnit === "mm" ? 0.1 : 1;
     const wF = weightUnit === "g" ? 0.001 : 1;
 
+    // fbo_sku / fbs_sku come from sources[], not as direct fields
+    const fboSku = info?.sources?.find((s) => s.source === "fbo")?.sku ?? 0;
+    const fbsSku = info?.sources?.find((s) => s.source === "fbs")?.sku ?? 0;
+
     const typeId = info?.type_id;
     const typeName = typeId ? (typeNameMap.get(typeId) ?? "") : "";
 
-    // Price: prefer dedicated prices API, fall back to price embedded in info response
+    // v5 prices are numbers; info prices are strings — handle both
     const sellingPrice =
-      parseFloat(priceItem?.price?.price ?? "0") ||
+      (priceItem?.price?.price ?? 0) ||
       parseFloat(info?.price ?? "0") ||
       0;
     const minPrice =
-      parseFloat(priceItem?.price?.min_price ?? "0") ||
+      (priceItem?.price?.min_price ?? 0) ||
       parseFloat(info?.min_price ?? "0") ||
       0;
 
@@ -388,8 +404,8 @@ export async function fetchAllProducts(
       width_cm: (info?.width ?? 0) * dimF,
       height_cm: (info?.height ?? 0) * dimF,
       weight_kg: (info?.weight ?? 0) * wF,
-      fbo_sku: info?.fbo_sku ?? 0,
-      fbs_sku: info?.fbs_sku ?? 0,
+      fbo_sku: fboSku,
+      fbs_sku: fbsSku,
       type_name: typeName,
     };
   });

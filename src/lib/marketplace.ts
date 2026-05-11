@@ -64,7 +64,7 @@ interface OzonOperation {
   operation_date: string;
   posting: {
     posting_number: string;
-    order_id?: number;
+    order_date?: string;
     delivery_schema?: string;
     items: Array<{ sku: number; name: string; offer_id?: string }>;
   };
@@ -183,7 +183,6 @@ async function syncOzon(
     if (op.accruals_for_sale) rawData.accruals_for_sale = op.accruals_for_sale;
     if (op.sale_commission) rawData.sale_commission = op.sale_commission;
     if (schema) rawData.delivery_schema = schema;
-    if (op.posting?.order_id) rawData.order_id = op.posting.order_id;
 
     transactions.push({
       storeId: store.id,
