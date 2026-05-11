@@ -166,13 +166,12 @@ async function fetchProductInfo(
 
   for (let i = 0; i < productIds.length; i += INFO_BATCH) {
     const batch = productIds.slice(i, i + INFO_BATCH);
-    const offerBatch = listItems.slice(i, i + INFO_BATCH).map((li) => li.offer_id);
     const res = await apiFetch(
       `${BASE}/v3/product/info/list`,
       {
         method: "POST",
         headers: h,
-        body: JSON.stringify({ offer_id: offerBatch, product_id: batch, sku: [] }),
+        body: JSON.stringify({ offer_id: [], product_id: batch, sku: [] }),
       },
       { label: "ozon:product/info/list" },
     );
