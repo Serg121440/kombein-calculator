@@ -357,6 +357,53 @@ async function fetchTypeNameMap(
   }
 }
 
+// ─── Product attributes (dimensions) — v4, batched 100 at a time ─────────────
+
+interface AttrItem {
+  id: number;
+  offer_id: string;
+  depth: number;
+  width: number;
+  height: number;
+  dimension_unit: string;
+  weight: number;
+  weight_unit: string;
+}
+
+async function fetchProductAttributes(
+  apiKey: string,
+  clientId: string,
+  listItems: ListItem[],
+): Promise<AttrItem[]> {
+  const h = hdrs(apiKey, clientId);
+  const all: AttrItem[] = [];
+  const ATTR_BATCH = 100;
+  const productIds = listItems.map((i) => i.product_id);
+
+  for (let i = 0; i < productIds.length; i += ATTR_BATCH) {
+    const batch = productIds.slice(i, i + ATTR_BATCH);
+    const res = await apiFetch(
+      `${BASE}/v4/product/info/attributes`,
+      {
+        method: "POST",
+        headers: h,
+        body: JSON.stringify({
+          filter: { product_id: batch.map(String), visibility: "ALL" },
+          last_id: "",
+          limit: ATTR_BATCH,
+        }),
+      },
+      { label: "ozon:product/info/attributes" },
+    );
+    const data = await parseJson<{ result: AttrItem[] }>(res);
+    all.push(...(data.result ?? []));
+    if (i + ATTR_BATCH < productIds.length) await sleep(REQUEST_GAP_MS);
+  }
+
+  console.log(`[ozon:product/attrs] got=${all.length} sample depth=${all[0]?.depth} unit=${all[0]?.dimension_unit}`);
+  return all;
+}
+
 // ─── Unified product fetch ────────────────────────────────────────────────────
 
 export async function fetchAllProducts(
@@ -367,31 +414,35 @@ export async function fetchAllProducts(
   const listItems = await fetchProductIds(apiKey, clientId);
   if (listItems.length === 0) return { products: [], warnings };
 
-  // Info, prices and category tree fetched in parallel. All best-effort.
-  const [infoItems, priceItems, typeNameMap] = await Promise.all([
+  // Info, prices, attributes (dimensions) and category tree — all parallel, all best-effort.
+  const [infoItems, priceItems, attrItems, typeNameMap] = await Promise.all([
     fetchProductInfo(apiKey, clientId, listItems).catch((e: Error) => {
-      warnings.push(`Названия/габариты недоступны: ${e.message}`);
+      warnings.push(`Названия/комиссии недоступны: ${e.message}`);
       return [] as InfoItem[];
     }),
     fetchProductPrices(apiKey, clientId).catch(() => [] as PriceItem[]),
+    fetchProductAttributes(apiKey, clientId, listItems).catch(() => [] as AttrItem[]),
     fetchTypeNameMap(apiKey, clientId),
   ]);
 
   console.log(
-    `[ozon:products] list=${listItems.length} info=${infoItems.length} prices=${priceItems.length} categories=${typeNameMap.size}`,
+    `[ozon:products] list=${listItems.length} info=${infoItems.length} prices=${priceItems.length} attrs=${attrItems.length} categories=${typeNameMap.size}`,
   );
 
   // Map info by product_id (primary) and offer_id (fallback)
   const infoById = new Map(infoItems.map((i) => [i.id, i]));
   const infoByOfferId = new Map(infoItems.map((i) => [i.offer_id, i]));
   const priceMap = new Map(priceItems.map((i) => [i.product_id, i]));
+  const attrById = new Map(attrItems.map((a) => [a.id, a]));
 
   const products = listItems.map((li) => {
     const info = infoById.get(li.product_id) ?? infoByOfferId.get(li.offer_id);
     const priceItem = priceMap.get(li.product_id);
+    const attr = attrById.get(li.product_id);
 
-    const dimUnit = info?.dimension_unit ?? "mm";
-    const weightUnit = info?.weight_unit ?? "g";
+    // Dimensions come from v4/product/info/attributes, not v3/product/info/list
+    const dimUnit = attr?.dimension_unit ?? "mm";
+    const weightUnit = attr?.weight_unit ?? "g";
     const dimF = dimUnit === "mm" ? 0.1 : 1;
     const wF = weightUnit === "g" ? 0.001 : 1;
 
@@ -422,10 +473,10 @@ export async function fetchAllProducts(
       name: info?.name ?? li.offer_id,
       selling_price: sellingPrice,
       min_price: minPrice,
-      depth_cm: (info?.depth ?? 0) * dimF,
-      width_cm: (info?.width ?? 0) * dimF,
-      height_cm: (info?.height ?? 0) * dimF,
-      weight_kg: (info?.weight ?? 0) * wF,
+      depth_cm: (attr?.depth ?? 0) * dimF,
+      width_cm: (attr?.width ?? 0) * dimF,
+      height_cm: (attr?.height ?? 0) * dimF,
+      weight_kg: (attr?.weight ?? 0) * wF,
       fbo_sku: fboSku,
       fbs_sku: fbsSku,
       type_name: typeName,
