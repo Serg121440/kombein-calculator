@@ -33,6 +33,8 @@ export default function EconomicsPage() {
   const [customTo, setCustomTo] = useState<string>("");
   const [redemptionPct, setRedemptionPct] = useState(DEFAULT_REDEMPTION);
 
+  const taxRatePct = settings.taxRatePct ?? 0;
+
   const period = useMemo(
     () => buildPeriod(periodKey, customFrom && customTo ? { from: customFrom, to: customTo } : undefined),
     [periodKey, customFrom, customTo],
@@ -48,13 +50,13 @@ export default function EconomicsPage() {
     () =>
       filtered.map((p) => {
         const store = stores.find((s) => s.id === p.storeId);
-        const plan = calculatePlan(p, tariffs, { storageDays: settings.storageDays, schema });
+        const plan = calculatePlan(p, tariffs, { storageDays: settings.storageDays, schema, taxRatePct });
 
         if (model === "MODEL1") {
           return { product: p, store, plan, perUnit: null, fact: null, deltas: null };
         }
 
-        const fact = calculateFact(p, transactions, period);
+        const fact = calculateFact(p, transactions, period, taxRatePct);
         const perUnit =
           model === "MODEL2"
             ? calculateModel2PerUnit(fact, p.purchasePrice)
@@ -63,12 +65,15 @@ export default function EconomicsPage() {
 
         return { product: p, store, plan, fact, perUnit, deltas };
       }),
-    [filtered, stores, tariffs, transactions, settings.storageDays, model, period, redemptionPct, schema],
+    [filtered, stores, tariffs, transactions, settings.storageDays, model, period, redemptionPct, schema, taxRatePct],
   );
 
   const hasData = rows.some((r) =>
     model === "MODEL1" ? true : r.perUnit !== null,
   );
+
+  // Detect FBS logistics warning: FBS schema, no manual logistics tariff, no fbs delivery amount
+  const fbsLogisticsWarn = model === "MODEL1" && schema === "FBS";
 
   return (
     <div>
@@ -118,6 +123,19 @@ export default function EconomicsPage() {
           </div>
         }
       />
+
+      {/* FBS logistics hint */}
+      {fbsLogisticsWarn && (
+        <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-800 flex items-start gap-2">
+          <span className="mt-0.5">⚠️</span>
+          <span>
+            <b>ФБС — логистика не рассчитана.</b> Ozon взимает логистику ФБС за последнюю милю по весовой шкале (~35–1500 ₽/заказ).
+            Добавьте тариф типа «Логистика» в разделе{" "}
+            <Link href="/tariffs" className="underline font-medium">Тарифы</Link>{" "}
+            для точного планирования. В М2/М3 фактические расходы берутся из начислений автоматически.
+          </span>
+        </div>
+      )}
 
       {model === "MODEL3" && (
         <div className="card p-4 mb-4 flex flex-wrap items-center gap-4">
@@ -169,6 +187,7 @@ export default function EconomicsPage() {
                     <th className="text-right">Логист.</th>
                     <th className="text-right">Хранение</th>
                     <th className="text-right">Себест.</th>
+                    {taxRatePct > 0 && <th className="text-right">Налог</th>}
                     <th className="text-right">Прибыль/шт</th>
                     <th className="text-right">Маржа</th>
                     <th className="text-right">ROI</th>
@@ -180,7 +199,10 @@ export default function EconomicsPage() {
                     <th className="text-right">Выручка/шт</th>
                     <th className="text-right">Комисс./шт</th>
                     <th className="text-right">Логист./шт</th>
+                    <th className="text-right">Хранение/шт</th>
                     <th className="text-right">Реклама/шт</th>
+                    <th className="text-right">Возвр.+Штр./шт</th>
+                    {taxRatePct > 0 && <th className="text-right">Налог/шт</th>}
                     <th className="text-right">Себест.</th>
                     <th className="text-right">Прибыль/шт</th>
                     <th className="text-right">Маржа</th>
@@ -195,7 +217,10 @@ export default function EconomicsPage() {
                     <th className="text-right">Выручка/шт</th>
                     <th className="text-right">Комисс./шт</th>
                     <th className="text-right">Логист./шт</th>
+                    <th className="text-right">Хранение/шт</th>
                     <th className="text-right">Реклама/шт</th>
+                    <th className="text-right">Возвр.+Штр./шт</th>
+                    {taxRatePct > 0 && <th className="text-right">Налог/шт</th>}
                     <th className="text-right">Себест.</th>
                     <th className="text-right">Прибыль/шт</th>
                     <th className="text-right">Маржа</th>
@@ -238,9 +263,15 @@ export default function EconomicsPage() {
                       <>
                         <td className="text-right">{formatRub(plan.revenue)}</td>
                         <td className="text-right text-gray-600">{formatRub(plan.commission)}</td>
-                        <td className="text-right text-gray-600">{formatRub(plan.logistics)}</td>
+                        <td className="text-right text-gray-600">
+                          {formatRub(plan.logistics)}
+                          {schema === "FBS" && plan.logistics === 0 && (
+                            <span className="text-amber-500 ml-1" title="Добавьте тариф логистики ФБС">·</span>
+                          )}
+                        </td>
                         <td className="text-right text-gray-600">{formatRub(plan.storage)}</td>
                         <td className="text-right text-gray-600">{formatRub(plan.costOfGoods)}</td>
+                        {taxRatePct > 0 && <td className="text-right text-gray-600">{formatRub(plan.tax)}</td>}
                         <td className={`text-right ${profitClass}`}>{formatRub(plan.grossProfit)}</td>
                         <td className="text-right">{formatPct(plan.marginPct)}</td>
                         <td className="text-right">{formatPct(plan.roiPct)}</td>
@@ -254,7 +285,12 @@ export default function EconomicsPage() {
                         <td className="text-right">{perUnit ? formatRub(perUnit.revenue) : "—"}</td>
                         <td className="text-right text-gray-600">{perUnit ? formatRub(perUnit.commission) : "—"}</td>
                         <td className="text-right text-gray-600">{perUnit ? formatRub(perUnit.logistics) : "—"}</td>
+                        <td className="text-right text-gray-600">{perUnit ? formatRub(perUnit.storage) : "—"}</td>
                         <td className="text-right text-gray-600">{perUnit ? formatRub(perUnit.advertising) : "—"}</td>
+                        <td className="text-right text-gray-600">
+                          {perUnit ? formatRub(perUnit.penalties + (fact ? (fact.refunds + fact.others) / Math.max(1, fact.unitsRedeemed) : 0)) : "—"}
+                        </td>
+                        {taxRatePct > 0 && <td className="text-right text-gray-600">{perUnit ? formatRub(perUnit.tax) : "—"}</td>}
                         <td className="text-right text-gray-600">{perUnit ? formatRub(perUnit.costOfGoods) : "—"}</td>
                         <td className={`text-right ${profitClass}`}>{perUnit ? formatRub(perUnit.grossProfit) : "—"}</td>
                         <td className="text-right">{perUnit ? formatPct(perUnit.marginPct) : "—"}</td>
@@ -275,7 +311,12 @@ export default function EconomicsPage() {
                         <td className="text-right">{perUnit ? formatRub(perUnit.revenue) : "—"}</td>
                         <td className="text-right text-gray-600">{perUnit ? formatRub(perUnit.commission) : "—"}</td>
                         <td className="text-right text-gray-600">{perUnit ? formatRub(perUnit.logistics) : "—"}</td>
+                        <td className="text-right text-gray-600">{perUnit ? formatRub(perUnit.storage) : "—"}</td>
                         <td className="text-right text-gray-600">{perUnit ? formatRub(perUnit.advertising) : "—"}</td>
+                        <td className="text-right text-gray-600">
+                          {perUnit ? formatRub(perUnit.penalties + (fact ? (fact.refunds + fact.others) / Math.max(1, fact.unitsSold * redemptionPct / 100) : 0)) : "—"}
+                        </td>
+                        {taxRatePct > 0 && <td className="text-right text-gray-600">{perUnit ? formatRub(perUnit.tax) : "—"}</td>}
                         <td className="text-right text-gray-600">{perUnit ? formatRub(perUnit.costOfGoods) : "—"}</td>
                         <td className={`text-right ${profitClass}`}>{perUnit ? formatRub(perUnit.grossProfit) : "—"}</td>
                         <td className="text-right">{perUnit ? formatPct(perUnit.marginPct) : "—"}</td>

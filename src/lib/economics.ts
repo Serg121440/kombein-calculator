@@ -13,9 +13,11 @@ export interface EconomicsContext {
   storageDays: number;
   /** Fulfillment schema for Method 1 logistics/commission selection. Default: "FBS" */
   schema?: "FBO" | "FBS";
+  /** Tax rate % on revenue (e.g. USN-6%). 0 or omitted = no tax. */
+  taxRatePct?: number;
 }
 
-const DEFAULT_CONTEXT: EconomicsContext = { storageDays: 30, schema: "FBS" };
+const DEFAULT_CONTEXT: EconomicsContext = { storageDays: 30, schema: "FBS", taxRatePct: 0 };
 
 function isActiveOn(t: Tariff, dateIso: string): boolean {
   const d = new Date(dateIso).getTime();
@@ -196,10 +198,12 @@ export function calculatePlan(
   const liters = productVolumeLiters(product);
   const storage = storageTariff ? liters * storageTariff.value * ctx.storageDays : 0;
   const lastMile = lastMileTariff ? lastMileTariff.value : 0;
+  const taxRatePct = ctx.taxRatePct ?? 0;
+  const tax = taxRatePct > 0 ? (revenue * taxRatePct) / 100 : 0;
   const costOfGoods = product.purchasePrice;
 
   const grossProfit =
-    revenue - commission - logistics - storage - acquiring - lastMile - costOfGoods;
+    revenue - commission - logistics - storage - acquiring - lastMile - tax - costOfGoods;
   const marginPct = revenue > 0 ? (grossProfit / revenue) * 100 : 0;
   const roiPct = costOfGoods > 0 ? (grossProfit / costOfGoods) * 100 : 0;
 
@@ -211,6 +215,7 @@ export function calculatePlan(
     storage,
     acquiring,
     lastMile,
+    tax,
     costOfGoods,
     grossProfit,
     marginPct,
@@ -236,6 +241,7 @@ export function calculateFact(
   product: Product,
   transactions: Transaction[],
   period: FactPeriod = {},
+  taxRatePct = 0,
 ): UnitEconomicsFact {
   const txs = transactions.filter(
     (t) =>
@@ -266,6 +272,7 @@ export function calculateFact(
   const unitsRedeemed = Math.max(0, unitsSold - unitsRefunded);
 
   const costOfGoods = product.purchasePrice * unitsSold;
+  const tax = taxRatePct > 0 ? (revenue * taxRatePct) / 100 : 0;
 
   const grossProfit =
     revenue -
@@ -277,6 +284,7 @@ export function calculateFact(
     refunds -
     others -
     acquiring -
+    tax -
     costOfGoods;
   const marginPct = revenue > 0 ? (grossProfit / revenue) * 100 : 0;
   const roiPct = costOfGoods > 0 ? (grossProfit / costOfGoods) * 100 : 0;
@@ -292,6 +300,7 @@ export function calculateFact(
     refunds,
     others,
     acquiring,
+    tax,
     costOfGoods,
     grossProfit,
     marginPct,
@@ -318,10 +327,11 @@ function buildPerUnit(
   const advertising = div(fact.advertising);
   const acquiring = div(fact.acquiring);
   const penalties = div(fact.penalties);
+  const tax = div(fact.tax);
   const costOfGoods = purchasePrice;
 
   const grossProfit =
-    revenue - commission - logistics - storage - advertising - acquiring - penalties - costOfGoods;
+    revenue - commission - logistics - storage - advertising - acquiring - penalties - tax - costOfGoods;
   const marginPct = revenue > 0 ? (grossProfit / revenue) * 100 : 0;
   const roiPct = costOfGoods > 0 ? (grossProfit / costOfGoods) * 100 : 0;
 
@@ -336,6 +346,7 @@ function buildPerUnit(
     advertising,
     acquiring,
     penalties,
+    tax,
     costOfGoods,
     grossProfit,
     marginPct,
@@ -386,6 +397,7 @@ export function comparePlanFact(
     commission: deltaPct(perUnit.commission, plan.commission),
     logistics: deltaPct(perUnit.logistics, plan.logistics),
     storage: deltaPct(perUnit.storage, plan.storage),
+    tax: deltaPct(perUnit.tax, plan.tax),
     grossProfit: deltaPct(perUnit.grossProfit, plan.grossProfit),
     marginPct: perUnit.marginPct - plan.marginPct,
     roiPct: perUnit.roiPct - plan.roiPct,
@@ -399,10 +411,11 @@ export function aggregateFactByStore(
   products: Product[],
   transactions: Transaction[],
   period: FactPeriod = {},
+  taxRatePct = 0,
 ) {
   const storeProducts = products.filter((p) => p.storeId === storeId);
   return storeProducts
-    .map((p) => calculateFact(p, transactions, period))
+    .map((p) => calculateFact(p, transactions, period, taxRatePct))
     .filter((f) => f.revenue !== 0 || f.unitsSold > 0);
 }
 
@@ -411,9 +424,10 @@ export function totalsByStore(
   products: Product[],
   transactions: Transaction[],
   period: FactPeriod = {},
+  taxRatePct = 0,
 ) {
   const storeProducts = products.filter((p) => p.storeId === store.id);
-  const facts = storeProducts.map((p) => calculateFact(p, transactions, period));
+  const facts = storeProducts.map((p) => calculateFact(p, transactions, period, taxRatePct));
 
   // Advertising transactions from Performance API have no productId/sku,
   // so they are invisible to calculateFact. Sum them directly at store level.
@@ -438,6 +452,7 @@ export function totalsByStore(
       acc.penalties += f.penalties;
       acc.refunds += f.refunds;
       acc.others += f.others;
+      acc.tax += f.tax;
       acc.costOfGoods += f.costOfGoods;
       acc.grossProfit += f.grossProfit;
       acc.unitsSold += f.unitsSold;
@@ -453,6 +468,7 @@ export function totalsByStore(
       penalties: 0,
       refunds: 0,
       others: 0,
+      tax: 0,
       costOfGoods: 0,
       grossProfit: 0,
       unitsSold: 0,

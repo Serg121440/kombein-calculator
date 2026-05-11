@@ -46,10 +46,12 @@ export default function DashboardPage() {
     [stores, storeId],
   );
 
+  const taxRatePct = settings.taxRatePct ?? 0;
+
   const totals = useMemo(() => {
     return targetStores.reduce(
       (acc, s) => {
-        const t = totalsByStore(s, products, transactions, period);
+        const t = totalsByStore(s, products, transactions, period, taxRatePct);
         acc.revenue += t.revenue;
         acc.grossProfit += t.grossProfit;
         acc.commission += t.commission;
@@ -77,7 +79,7 @@ export default function DashboardPage() {
   const activeProducts = products.filter((p) => p.active).length;
 
   const productProfits = useMemo(() => {
-    const ctx = { storageDays: settings.storageDays };
+    const ctx = { storageDays: settings.storageDays, taxRatePct };
     return products
       .filter((p) => storeId === "ALL" || p.storeId === storeId)
       .map((p) => {
@@ -87,6 +89,7 @@ export default function DashboardPage() {
           [p],
           transactions,
           period,
+          taxRatePct,
         );
         const fact = facts[0];
         const profit = fact ? fact.grossProfit : 0;
@@ -98,7 +101,7 @@ export default function DashboardPage() {
           marginPct: plan.marginPct,
         };
       });
-  }, [products, tariffs, transactions, period, settings.storageDays, storeId]);
+  }, [products, tariffs, transactions, period, settings.storageDays, taxRatePct, storeId]);
 
   const negativeMargin = productProfits.filter((p) => p.marginPct < 0).length;
 
@@ -144,6 +147,7 @@ export default function DashboardPage() {
       if (!product) continue;
       const plan = calculatePlan(product, tariffs, {
         storageDays: settings.storageDays,
+        taxRatePct,
       });
       months[k].plan += plan.grossProfit;
     }

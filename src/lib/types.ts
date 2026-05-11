@@ -130,6 +130,7 @@ export interface UnitEconomicsPlan {
   storage: number;
   acquiring: number;
   lastMile: number;
+  tax: number;
   costOfGoods: number;
   grossProfit: number;
   marginPct: number;
@@ -148,6 +149,7 @@ export interface UnitEconomicsFact {
   refunds: number;
   others: number;
   acquiring: number;
+  tax: number;
   costOfGoods: number;
   grossProfit: number;
   marginPct: number;
@@ -172,6 +174,7 @@ export interface UnitEconomicsPerUnit {
   advertising: number;
   acquiring: number;
   penalties: number;
+  tax: number;
   costOfGoods: number;
   grossProfit: number;
   marginPct: number;
@@ -182,4 +185,6 @@ export interface AppSettings {
   storageDays: number;
   defaultCurrency: "RUB";
   plan: PricingPlan;
+  /** Tax rate % applied to revenue for planning/fact (e.g. USN-6%). 0 = disabled. */
+  taxRatePct: number;
 }

@@ -63,6 +63,7 @@ const defaultSettings: AppSettings = {
   storageDays: 30,
   defaultCurrency: "RUB",
   plan: "PRO",
+  taxRatePct: 0,
 };
 
 export const useAppStore = create<State>()(
