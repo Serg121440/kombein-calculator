@@ -177,7 +177,7 @@ async function fetchProductInfo(
     );
     const rawText = await res.text();
     if (i === 0) {
-      console.log(`[ozon:product/info] raw (first 400): ${rawText.slice(0, 400)}`);
+      console.log(`[ozon:product/info] raw (first 1200): ${rawText.slice(0, 1200)}`);
     }
     let parsed: unknown;
     try {

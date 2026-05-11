@@ -254,11 +254,15 @@ export const useAppStore = create<State>()(
         }
         return window.localStorage;
       }),
-      // Strip rawData from transactions before persisting — it stores full
-      // Ozon/WB API objects (can be 500B–2KB each) and blows the 5 MB limit.
+      // Transactions intentionally excluded — can be 10k–200k rows,
+      // far exceeds the 5 MB localStorage limit. Re-fetched on each sync.
       partialize: (state) => ({
-        ...state,
-        transactions: state.transactions.map(({ rawData: _rd, ...t }) => t),
+        settings: state.settings,
+        stores: state.stores,
+        products: state.products,
+        tariffs: state.tariffs,
+        reports: state.reports,
+        hasHydrated: state.hasHydrated,
       }),
       onRehydrateStorage: () => (state) => {
         state?.setHydrated();
