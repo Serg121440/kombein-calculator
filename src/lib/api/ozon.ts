@@ -15,7 +15,7 @@ const BASE = "https://api-seller.ozon.ru";
 const REQUEST_GAP_MS = 350; // gap between paginated calls
 const PAGE_SIZE = 1_000;
 const INFO_BATCH = 1_000;
-const TX_PAGE_LIMIT = 10; // max pages fetched per sync (10k transactions)
+const TX_PAGE_LIMIT = 200; // 200 pages × 1000 rows = 200k transactions max
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
@@ -79,9 +79,18 @@ export interface OzonOperation {
   operation_date: string;
   posting: {
     posting_number: string;
+    order_id?: number;
+    delivery_schema?: string;
     items: Array<{ sku: number; name: string; offer_id?: string }>;
   };
   amount: number;
+  /** Gross accrual for the sale before commission */
+  accruals_for_sale?: number;
+  /** Marketplace commission (negative value) */
+  sale_commission?: number;
+  /** Per-service fee breakdown embedded in this operation */
+  services?: Array<{ name: string; price: number }>;
+  type?: string;
 }
 
 export interface OzonProduct {

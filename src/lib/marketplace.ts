@@ -64,9 +64,14 @@ interface OzonOperation {
   operation_date: string;
   posting: {
     posting_number: string;
+    order_id?: number;
+    delivery_schema?: string;
     items: Array<{ sku: number; name: string; offer_id?: string }>;
   };
   amount: number;
+  accruals_for_sale?: number;
+  sale_commission?: number;
+  services?: Array<{ name: string; price: number }>;
 }
 
 async function syncOzon(
@@ -163,14 +168,24 @@ async function syncOzon(
       .map((p) => [p.sku, p.id]),
   );
 
-  const transactions: Omit<Transaction, "id">[] = (txData.operations ?? []).map((op) => {
+  const transactions: Omit<Transaction, "id">[] = [];
+  for (const op of txData.operations ?? []) {
     const item = op.posting?.items?.[0];
     // Prefer explicit offer_id; fall back to resolving numeric listing SKU
     const offerId =
       (item?.offer_id || "") ||
       (item?.sku ? listingSkuToOfferId.get(item.sku) : undefined) ||
       "";
-    return {
+
+    const schema = op.posting?.delivery_schema;
+    const description = schema ? `${op.operation_type} (${schema})` : op.operation_type;
+    const rawData: Record<string, unknown> = {};
+    if (op.accruals_for_sale) rawData.accruals_for_sale = op.accruals_for_sale;
+    if (op.sale_commission) rawData.sale_commission = op.sale_commission;
+    if (schema) rawData.delivery_schema = schema;
+    if (op.posting?.order_id) rawData.order_id = op.posting.order_id;
+
+    transactions.push({
       storeId: store.id,
       sku: offerId || undefined,
       productId: offerId ? skuToProductId.get(offerId) || undefined : undefined,
@@ -178,11 +193,32 @@ async function syncOzon(
       date: op.operation_date ?? new Date().toISOString(),
       type: classifyOzonOperation(op.operation_type, op.amount),
       amount: op.amount,
-      description: op.operation_type,
+      description,
       source: "api",
       externalId: String(op.operation_id),
-    };
-  });
+      rawData: Object.keys(rawData).length > 0 ? rawData : undefined,
+    });
+
+    // Expand embedded service fees (present in FBS operations).
+    // Each service is a separate charge not returned as a top-level operation for FBS.
+    if (op.services?.length && schema === "FBS") {
+      for (const svc of op.services) {
+        if (!svc.price) continue;
+        transactions.push({
+          storeId: store.id,
+          sku: offerId || undefined,
+          productId: offerId ? skuToProductId.get(offerId) || undefined : undefined,
+          orderId: op.posting?.posting_number ?? String(op.operation_id),
+          date: op.operation_date ?? new Date().toISOString(),
+          type: classifyOzonOperation(svc.name, svc.price),
+          amount: svc.price,
+          description: svc.name + " (FBS)",
+          source: "api",
+          externalId: `${op.operation_id}-${svc.name}`,
+        });
+      }
+    }
+  }
 
   // Performance API (advertising expenses)
   if (store.perfClientId && store.perfClientSecretEncoded) {
