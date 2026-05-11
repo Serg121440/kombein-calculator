@@ -42,16 +42,25 @@ interface InfoItemSource {
   source: string; // "fbo" | "fbs"
 }
 
+interface InfoItemCommission {
+  sale_schema: string; // "FBO" | "FBS" | "RFBS" | "FBP"
+  percent: number;
+  delivery_amount: number;
+  return_amount: number;
+  value: number;
+}
+
 interface InfoItem {
   id: number;
   offer_id: string;
   name: string;
   /** FBO/FBS SKUs live in sources[], not as direct fields */
   sources?: InfoItemSource[];
-  depth: number;
-  width: number;
-  height: number;
-  weight: number;
+  /** Not returned by v3/product/info/list — absent when seller hasn't set packaging */
+  depth?: number;
+  width?: number;
+  height?: number;
+  weight?: number;
   dimension_unit?: string;
   weight_unit?: string;
   type_id?: number;
@@ -59,6 +68,8 @@ interface InfoItem {
   price?: string;
   min_price?: string;
   old_price?: string;
+  volume_weight?: number;
+  commissions?: InfoItemCommission[];
 }
 
 interface CategoryTreeNode {
@@ -114,6 +125,14 @@ export interface OzonProduct {
   fbs_sku: number;
   /** Ozon product type name (Тип товара) — used for tariff matching */
   type_name: string;
+  /** Commission % for FBO (from product-level commissions in API response) */
+  fbo_commission_percent: number;
+  /** Commission % for FBS */
+  fbs_commission_percent: number;
+  /** Logistics cost for FBO delivery (rub) */
+  fbo_delivery_amount: number;
+  /** Logistics cost for FBS delivery (rub) */
+  fbs_delivery_amount: number;
 }
 
 // ─── Product list — cursor pagination ────────────────────────────────────────
@@ -361,13 +380,6 @@ export async function fetchAllProducts(
   console.log(
     `[ozon:products] list=${listItems.length} info=${infoItems.length} prices=${priceItems.length} categories=${typeNameMap.size}`,
   );
-  // Log first item's raw dimensions for diagnostics
-  if (infoItems[0]) {
-    const fi = infoItems[0];
-    console.log(
-      `[ozon:products] first item dimensions: depth=${fi.depth} width=${fi.width} height=${fi.height} weight=${fi.weight} dim_unit=${fi.dimension_unit} weight_unit=${fi.weight_unit}`,
-    );
-  }
 
   // Map info by product_id (primary) and offer_id (fallback)
   const infoById = new Map(infoItems.map((i) => [i.id, i]));
@@ -400,6 +412,10 @@ export async function fetchAllProducts(
       parseFloat(info?.min_price ?? "0") ||
       0;
 
+    // Per-product commission and logistics from API response
+    const fboC = info?.commissions?.find((c) => c.sale_schema === "FBO");
+    const fbsC = info?.commissions?.find((c) => c.sale_schema === "FBS");
+
     return {
       product_id: li.product_id,
       offer_id: li.offer_id,
@@ -413,6 +429,10 @@ export async function fetchAllProducts(
       fbo_sku: fboSku,
       fbs_sku: fbsSku,
       type_name: typeName,
+      fbo_commission_percent: fboC?.percent ?? 0,
+      fbs_commission_percent: fbsC?.percent ?? 0,
+      fbo_delivery_amount: fboC?.delivery_amount ?? 0,
+      fbs_delivery_amount: fbsC?.delivery_amount ?? 0,
     };
   });
 

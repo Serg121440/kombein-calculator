@@ -56,6 +56,10 @@ interface OzonProductInfo {
   fbo_sku: number;
   fbs_sku: number;
   type_name: string;
+  fbo_commission_percent: number;
+  fbs_commission_percent: number;
+  fbo_delivery_amount: number;
+  fbs_delivery_amount: number;
 }
 
 interface OzonOperation {
