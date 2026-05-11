@@ -140,6 +140,14 @@ async function syncOzon(
     }
   }
 
+  // Deactivate products that have disappeared from the API (moved to archive).
+  const apiOfferIds = new Set(allOzonProducts.map((p) => String(p.offer_id)));
+  for (const existing of storeProducts) {
+    if (!apiOfferIds.has(existing.sku) && existing.active) {
+      productUpdates.push({ id: existing.id, patch: { active: false } });
+    }
+  }
+
   // Ozon finance API uses numeric listing SKU (fbo_sku/fbs_sku), not offer_id.
   // Build numeric_listing_sku → offer_id so we can link transactions to products.
   const listingSkuToOfferId = new Map<number, string>();

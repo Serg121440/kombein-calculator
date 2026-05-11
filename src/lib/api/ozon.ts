@@ -361,6 +361,13 @@ export async function fetchAllProducts(
   console.log(
     `[ozon:products] list=${listItems.length} info=${infoItems.length} prices=${priceItems.length} categories=${typeNameMap.size}`,
   );
+  // Log first item's raw dimensions for diagnostics
+  if (infoItems[0]) {
+    const fi = infoItems[0];
+    console.log(
+      `[ozon:products] first item dimensions: depth=${fi.depth} width=${fi.width} height=${fi.height} weight=${fi.weight} dim_unit=${fi.dimension_unit} weight_unit=${fi.weight_unit}`,
+    );
+  }
 
   // Map info by product_id (primary) and offer_id (fallback)
   const infoById = new Map(infoItems.map((i) => [i.id, i]));
