@@ -155,22 +155,27 @@ async function fetchProductInfo(
 ): Promise<InfoItem[]> {
   const h = hdrs(apiKey, clientId);
   const all: InfoItem[] = [];
-  const offerIds = listItems.map((i) => i.offer_id);
+  const productIds = listItems.map((i) => i.product_id);
 
-  for (let i = 0; i < offerIds.length; i += INFO_BATCH) {
-    const batch = offerIds.slice(i, i + INFO_BATCH);
+  for (let i = 0; i < productIds.length; i += INFO_BATCH) {
+    const batch = productIds.slice(i, i + INFO_BATCH);
     const res = await apiFetch(
       `${BASE}/v3/product/info/list`,
       {
         method: "POST",
         headers: h,
-        body: JSON.stringify({ offer_id: batch, product_id: [], sku: [] }),
+        body: JSON.stringify({ offer_id: [], product_id: batch, sku: [] }),
       },
       { label: "ozon:product/info/list" },
     );
     const data = await parseJson<{ result: { items: InfoItem[] } }>(res);
-    all.push(...(data.result?.items ?? []));
-    if (i + INFO_BATCH < offerIds.length) await sleep(REQUEST_GAP_MS);
+    const items = data.result?.items ?? [];
+    console.log(
+      `[ozon:product/info] batch=${batch.length} got=${items.length}` +
+      (items[0] ? ` first={id:${items[0].id},name:${JSON.stringify(items[0].name)},type_id:${items[0].type_id}}` : ""),
+    );
+    all.push(...items);
+    if (i + INFO_BATCH < productIds.length) await sleep(REQUEST_GAP_MS);
   }
 
   return all;
@@ -316,8 +321,6 @@ export async function fetchAllProducts(
   const listItems = await fetchProductIds(apiKey, clientId);
   if (listItems.length === 0) return { products: [], warnings };
 
-  const productIds = listItems.map((i) => i.product_id);
-
   // Info, prices and category tree fetched in parallel. All best-effort.
   const [infoItems, priceItems, typeNameMap] = await Promise.all([
     fetchProductInfo(apiKey, clientId, listItems).catch((e: Error) => {
@@ -329,13 +332,17 @@ export async function fetchAllProducts(
     fetchTypeNameMap(apiKey, clientId),
   ]);
 
-  // Map info by offer_id AND id fallback
-  const infoByOfferId = new Map(infoItems.map((i) => [i.offer_id, i]));
+  console.log(
+    `[ozon:products] list=${listItems.length} info=${infoItems.length} prices=${priceItems.length} categories=${typeNameMap.size}`,
+  );
+
+  // Map info by product_id (primary) and offer_id (fallback)
   const infoById = new Map(infoItems.map((i) => [i.id, i]));
+  const infoByOfferId = new Map(infoItems.map((i) => [i.offer_id, i]));
   const priceMap = new Map(priceItems.map((i) => [i.product_id, i]));
 
   const products = listItems.map((li) => {
-    const info = infoByOfferId.get(li.offer_id) ?? infoById.get(li.product_id);
+    const info = infoById.get(li.product_id) ?? infoByOfferId.get(li.offer_id);
     const priceItem = priceMap.get(li.product_id);
 
     const dimUnit = info?.dimension_unit ?? "mm";
