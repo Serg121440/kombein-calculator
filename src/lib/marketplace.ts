@@ -115,8 +115,8 @@ async function syncOzon(
     const existing = existingBySkus.get(offerId);
     const hasRealName = p.name && p.name !== offerId;
 
-    // FBO commission preferred; fall back to FBS; 0 if neither available
-    const commissionPct = p.fbo_commission_percent || p.fbs_commission_percent || undefined;
+    const commissionPct = p.fbo_commission_percent || undefined;
+    const fbsCommissionPct = p.fbs_commission_percent || undefined;
 
     if (!existing) {
       newProducts.push({
@@ -132,6 +132,7 @@ async function syncOzon(
         heightCm: p.height_cm,
         active: true,
         commissionPct,
+        fbsCommissionPct,
       });
     } else {
       // Refresh name, price, category, dimensions, commission from API.
@@ -145,6 +146,7 @@ async function syncOzon(
       if (p.width_cm > 0) patch.widthCm = p.width_cm;
       if (p.height_cm > 0) patch.heightCm = p.height_cm;
       if (commissionPct) patch.commissionPct = commissionPct;
+      if (fbsCommissionPct) patch.fbsCommissionPct = fbsCommissionPct;
       // Re-activate if it was previously deactivated but is back in the API
       if (!existing.active) patch.active = true;
       if (Object.keys(patch).length > 0) productUpdates.push({ id: existing.id, patch });

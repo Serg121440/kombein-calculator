@@ -35,8 +35,10 @@ export interface Product {
   heightCm: number;
   active: boolean;
   createdAt: string;
-  /** Commission % from Ozon API (product-level, overrides generic tariff) */
+  /** Commission % from Ozon API — FBO schema (overrides generic tariff) */
   commissionPct?: number;
+  /** Commission % from Ozon API — FBS schema */
+  fbsCommissionPct?: number;
 }
 
 export type TariffType =

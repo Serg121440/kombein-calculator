@@ -95,6 +95,62 @@ function applyLogisticsTariff(t: Tariff, product: Product): number {
   return t.value; // flat fee (tiered tariff already selected the right tier)
 }
 
+// ─── Ozon FBO delivery tariff table ──────────────────────────────────────────
+// Source: "Тарифы по умолчанию" sheet from Ozon logistics Excel (May 2025).
+// Two price brackets: ≤300 rub and >300 rub. Flat fee per volume tier.
+// Applied when no manual LOGISTICS tariff is configured for the store.
+
+const OZON_FBO_DELIVERY: Array<{ maxL: number; r0: number; r300: number }> = [
+  { maxL: 0.200, r0: 17.28, r300: 56 },
+  { maxL: 0.400, r0: 19.32, r300: 63 },
+  { maxL: 0.600, r0: 21.35, r300: 67 },
+  { maxL: 0.800, r0: 22.37, r300: 67 },
+  { maxL: 1.000, r0: 23.38, r300: 67 },
+  { maxL: 1.250, r0: 25.42, r300: 71 },
+  { maxL: 1.500, r0: 26.43, r300: 74 },
+  { maxL: 1.750, r0: 27.45, r300: 74 },
+  { maxL: 2.000, r0: 29.48, r300: 74 },
+  { maxL: 3.000, r0: 31.52, r300: 74 },
+  { maxL: 4.000, r0: 35.58, r300: 78 },
+  { maxL: 5.000, r0: 38.63, r300: 89 },
+  { maxL: 6.000, r0: 42.70, r300: 89 },
+  { maxL: 7.000, r0: 57.95, r300: 99 },
+  { maxL: 8.000, r0: 62.02, r300: 99 },
+  { maxL: 9.000, r0: 65.07, r300: 100 },
+  { maxL: 10.000, r0: 69.13, r300: 100 },
+  { maxL: 11.000, r0: 79.30, r300: 102 },
+  { maxL: 12.000, r0: 83.37, r300: 102 },
+  { maxL: 13.000, r0: 87.43, r300: 102 },
+  { maxL: 14.000, r0: 92.52, r300: 106 },
+  { maxL: 15.000, r0: 96.58, r300: 111 },
+  { maxL: 17.000, r0: 96.58, r300: 119 },
+  { maxL: 20.000, r0: 110.82, r300: 131 },
+  { maxL: 25.000, r0: 118.95, r300: 143 },
+  { maxL: 30.000, r0: 131.15, r300: 162 },
+  { maxL: 35.000, r0: 146.40, r300: 177 },
+  { maxL: 40.000, r0: 156.57, r300: 195 },
+  { maxL: 45.000, r0: 175.88, r300: 209 },
+  { maxL: 50.000, r0: 189.10, r300: 228 },
+  { maxL: 60.000, r0: 207.40, r300: 244 },
+  { maxL: 70.000, r0: 230.78, r300: 279 },
+  { maxL: 80.000, r0: 249.08, r300: 299 },
+  { maxL: 90.000, r0: 274.50, r300: 344 },
+  { maxL: 100.000, r0: 284.67, r300: 371 },
+  { maxL: 125.000, r0: 331.43, r300: 436 },
+  { maxL: 150.000, r0: 381.25, r300: 503 },
+  { maxL: 175.000, r0: 436.15, r300: 578 },
+  { maxL: 200.000, r0: 483.93, r300: 692 },
+  { maxL: 400.000, r0: 805.20, r300: 1026 },
+  { maxL: 600.000, r0: 805.20, r300: 1457 },
+  { maxL: 800.000, r0: 805.20, r300: 1891 },
+  { maxL: Infinity, r0: 805.20, r300: 2232 },
+];
+
+function ozonFboDelivery(volumeLiters: number, priceRub: number): number {
+  const tier = OZON_FBO_DELIVERY.find((t) => volumeLiters <= t.maxL) ?? OZON_FBO_DELIVERY.at(-1)!;
+  return priceRub <= 300 ? tier.r0 : tier.r300;
+}
+
 // ─── Model 1: Planned unit economics ─────────────────────────────────────────
 
 export function calculatePlan(
@@ -112,11 +168,21 @@ export function calculatePlan(
   const storageTariff = findTariff(tariffs, product.storeId, "STORAGE", cat, date);
   const lastMileTariff = findTariff(tariffs, product.storeId, "LAST_MILE", cat, date);
 
-  // Product-level commission % (from Ozon API) takes priority over generic tariff
+  // Commission: product-level API data takes priority over generic tariff
   const commissionPct = product.commissionPct ?? commissionTariff?.value ?? 0;
   const commission = revenue > 0 ? (revenue * commissionPct) / 100 : 0;
   const acquiring = acquiringTariff ? (revenue * acquiringTariff.value) / 100 : 0;
-  const logistics = logisticsTariff ? applyLogisticsTariff(logisticsTariff, product) : 0;
+
+  // Logistics: manual tariff → Ozon FBO table (when API commission data present) → 0
+  let logistics: number;
+  if (logisticsTariff) {
+    logistics = applyLogisticsTariff(logisticsTariff, product);
+  } else if (product.commissionPct) {
+    // FBO: use volume-based tariff table (Тарифы по умолчанию, May 2025)
+    logistics = ozonFboDelivery(productVolumeLiters(product), revenue);
+  } else {
+    logistics = 0;
+  }
 
   const liters = productVolumeLiters(product);
   const storage = storageTariff ? liters * storageTariff.value * ctx.storageDays : 0;
