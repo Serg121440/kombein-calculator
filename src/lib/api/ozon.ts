@@ -159,20 +159,35 @@ async function fetchProductInfo(
 
   for (let i = 0; i < productIds.length; i += INFO_BATCH) {
     const batch = productIds.slice(i, i + INFO_BATCH);
+    const offerBatch = listItems.slice(i, i + INFO_BATCH).map((li) => li.offer_id);
     const res = await apiFetch(
       `${BASE}/v3/product/info/list`,
       {
         method: "POST",
         headers: h,
-        body: JSON.stringify({ offer_id: [], product_id: batch, sku: [] }),
+        body: JSON.stringify({ offer_id: offerBatch, product_id: batch, sku: [] }),
       },
       { label: "ozon:product/info/list" },
     );
-    const data = await parseJson<{ result: { items: InfoItem[] } }>(res);
+    // Log raw response on first batch to diagnose structure issues
+    const rawText = await res.text();
+    if (i === 0) {
+      console.log(`[ozon:product/info] raw (first 600): ${rawText.slice(0, 600)}`);
+    }
+    let data: { result?: { items?: InfoItem[] } };
+    try {
+      data = JSON.parse(rawText) as typeof data;
+    } catch {
+      throw new Error(`Некорректный JSON от product/info/list: ${rawText.slice(0, 200)}`);
+    }
+    if (!res.ok) {
+      const msg = (data as Record<string, unknown>).message ?? rawText.slice(0, 300);
+      throw new Error(`[${res.status}] product/info/list: ${msg}`);
+    }
     const items = data.result?.items ?? [];
     console.log(
       `[ozon:product/info] batch=${batch.length} got=${items.length}` +
-      (items[0] ? ` first={id:${items[0].id},name:${JSON.stringify(items[0].name)},type_id:${items[0].type_id}}` : ""),
+      (items[0] ? ` first={id:${items[0].id},name:${JSON.stringify(items[0].name)}}` : ""),
     );
     all.push(...items);
     if (i + INFO_BATCH < productIds.length) await sleep(REQUEST_GAP_MS);
@@ -293,11 +308,11 @@ async function fetchTypeNameMap(
   const h = hdrs(apiKey, clientId);
   try {
     const res = await apiFetch(
-      `${BASE}/v4/category/tree`,
+      `${BASE}/v1/description-category/tree`,
       {
         method: "POST",
         headers: h,
-        body: JSON.stringify({ description_category_id: 0, language: "RU" }),
+        body: JSON.stringify({ language: "RU" }),
       },
       { label: "ozon:category/tree" },
     );
