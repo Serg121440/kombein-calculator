@@ -29,10 +29,12 @@ export default function ProductsPage() {
   const [costBusy, setCostBusy] = useState(false);
   const [storeFilter, setStoreFilter] = useState("ALL");
   const [search, setSearch] = useState("");
+  const [showInactive, setShowInactive] = useState(false);
   const [page, setPage] = useState(1);
 
   const filtered = useMemo(() => {
     return products
+      .filter((p) => showInactive || p.active)
       .filter((p) => storeFilter === "ALL" || p.storeId === storeFilter)
       .filter((p) => {
         if (!search.trim()) return true;
@@ -43,7 +45,7 @@ export default function ProductsPage() {
           p.category.toLowerCase().includes(q)
         );
       });
-  }, [products, storeFilter, search]);
+  }, [products, storeFilter, search, showInactive]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const pageData = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
@@ -208,6 +210,14 @@ export default function ProductsPage() {
             setPage(1);
           }}
         />
+        <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={showInactive}
+            onChange={(e) => { setShowInactive(e.target.checked); setPage(1); }}
+          />
+          Показать архивные
+        </label>
         <div className="text-sm text-gray-500">
           Найдено: {filtered.length}
         </div>

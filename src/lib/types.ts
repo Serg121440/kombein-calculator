@@ -35,6 +35,8 @@ export interface Product {
   heightCm: number;
   active: boolean;
   createdAt: string;
+  /** Commission % from Ozon API (product-level, overrides generic tariff) */
+  commissionPct?: number;
 }
 
 export type TariffType =

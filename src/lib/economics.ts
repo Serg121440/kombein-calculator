@@ -112,7 +112,9 @@ export function calculatePlan(
   const storageTariff = findTariff(tariffs, product.storeId, "STORAGE", cat, date);
   const lastMileTariff = findTariff(tariffs, product.storeId, "LAST_MILE", cat, date);
 
-  const commission = commissionTariff ? (revenue * commissionTariff.value) / 100 : 0;
+  // Product-level commission % (from Ozon API) takes priority over generic tariff
+  const commissionPct = product.commissionPct ?? commissionTariff?.value ?? 0;
+  const commission = revenue > 0 ? (revenue * commissionPct) / 100 : 0;
   const acquiring = acquiringTariff ? (revenue * acquiringTariff.value) / 100 : 0;
   const logistics = logisticsTariff ? applyLogisticsTariff(logisticsTariff, product) : 0;
 
