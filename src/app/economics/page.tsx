@@ -26,6 +26,7 @@ export default function EconomicsPage() {
   const settings = useAppStore((s) => s.settings);
 
   const [model, setModel] = useState<EconomicsModel>("MODEL1");
+  const [schema, setSchema] = useState<"FBO" | "FBS">("FBS");
   const [storeId, setStoreId] = useState("ALL");
   const [periodKey, setPeriodKey] = useState<PeriodKey>("30d");
   const [customFrom, setCustomFrom] = useState<string>("");
@@ -47,7 +48,7 @@ export default function EconomicsPage() {
     () =>
       filtered.map((p) => {
         const store = stores.find((s) => s.id === p.storeId);
-        const plan = calculatePlan(p, tariffs, { storageDays: settings.storageDays });
+        const plan = calculatePlan(p, tariffs, { storageDays: settings.storageDays, schema });
 
         if (model === "MODEL1") {
           return { product: p, store, plan, perUnit: null, fact: null, deltas: null };
@@ -62,7 +63,7 @@ export default function EconomicsPage() {
 
         return { product: p, store, plan, fact, perUnit, deltas };
       }),
-    [filtered, stores, tariffs, transactions, settings.storageDays, model, period, redemptionPct],
+    [filtered, stores, tariffs, transactions, settings.storageDays, model, period, redemptionPct, schema],
   );
 
   const hasData = rows.some((r) =>
@@ -96,6 +97,22 @@ export default function EconomicsPage() {
                 customTo={customTo}
                 onCustomChange={(f, t) => { setCustomFrom(f); setCustomTo(t); }}
               />
+            )}
+            {model === "MODEL1" && (
+              <div className="flex items-center gap-1 rounded-lg border border-gray-200 bg-white p-0.5 text-sm">
+                <button
+                  className={`px-3 py-1 rounded-md font-medium transition-colors ${schema === "FBS" ? "bg-brand-600 text-white" : "text-gray-600 hover:bg-gray-100"}`}
+                  onClick={() => setSchema("FBS")}
+                >
+                  ФБС
+                </button>
+                <button
+                  className={`px-3 py-1 rounded-md font-medium transition-colors ${schema === "FBO" ? "bg-brand-600 text-white" : "text-gray-600 hover:bg-gray-100"}`}
+                  onClick={() => setSchema("FBO")}
+                >
+                  ФБО
+                </button>
+              </div>
             )}
             <ModelPicker value={model} onChange={setModel} />
           </div>

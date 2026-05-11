@@ -31,6 +31,7 @@ export default function ProductPage() {
   const stores = useAppStore((s) => s.stores);
 
   const [model, setModel] = useState<EconomicsModel>("MODEL2");
+  const [schema, setSchema] = useState<"FBO" | "FBS">("FBS");
   const [periodKey, setPeriodKey] = useState<PeriodKey>("30d");
   const [customFrom, setCustomFrom] = useState<string>("");
   const [customTo, setCustomTo] = useState<string>("");
@@ -53,7 +54,7 @@ export default function ProductPage() {
   }
 
   const store = stores.find((s) => s.id === product.storeId);
-  const plan = calculatePlan(product, tariffs, { storageDays: settings.storageDays });
+  const plan = calculatePlan(product, tariffs, { storageDays: settings.storageDays, schema });
   const fact = model !== "MODEL1" ? calculateFact(product, transactions, period) : null;
 
   const perUnit =
@@ -81,6 +82,20 @@ export default function ProductPage() {
                 onCustomChange={(f, t) => { setCustomFrom(f); setCustomTo(t); }}
               />
             )}
+            <div className="flex items-center gap-1 rounded-lg border border-gray-200 bg-white p-0.5 text-sm">
+              <button
+                className={`px-3 py-1 rounded-md font-medium transition-colors ${schema === "FBS" ? "bg-brand-600 text-white" : "text-gray-600 hover:bg-gray-100"}`}
+                onClick={() => setSchema("FBS")}
+              >
+                ФБС
+              </button>
+              <button
+                className={`px-3 py-1 rounded-md font-medium transition-colors ${schema === "FBO" ? "bg-brand-600 text-white" : "text-gray-600 hover:bg-gray-100"}`}
+                onClick={() => setSchema("FBO")}
+              >
+                ФБО
+              </button>
+            </div>
             <ModelPicker value={model} onChange={setModel} />
           </div>
         }
@@ -141,7 +156,7 @@ export default function ProductPage() {
         {/* Plan card — always visible */}
         <div className="card p-4">
           <div className="text-xs uppercase text-gray-500">
-            М1 — план (на 1 шт)
+            М1 — план {schema} (на 1 шт)
           </div>
           <dl className="mt-2 space-y-1 text-sm">
             <Row label="Выручка" value={formatRub(plan.revenue)} />

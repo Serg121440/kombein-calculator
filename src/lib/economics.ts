@@ -11,9 +11,11 @@ import type {
 
 export interface EconomicsContext {
   storageDays: number;
+  /** Fulfillment schema for Method 1 logistics/commission selection. Default: "FBS" */
+  schema?: "FBO" | "FBS";
 }
 
-const DEFAULT_CONTEXT: EconomicsContext = { storageDays: 30 };
+const DEFAULT_CONTEXT: EconomicsContext = { storageDays: 30, schema: "FBS" };
 
 function isActiveOn(t: Tariff, dateIso: string): boolean {
   const d = new Date(dateIso).getTime();
@@ -161,6 +163,7 @@ export function calculatePlan(
 ): UnitEconomicsPlan {
   const revenue = product.sellingPrice;
   const cat = product.category || "*";
+  const schema = ctx.schema ?? "FBS";
 
   const commissionTariff = findTariff(tariffs, product.storeId, "COMMISSION", cat, date);
   const acquiringTariff = findTariff(tariffs, product.storeId, "ACQUIRING", cat, date);
@@ -168,17 +171,20 @@ export function calculatePlan(
   const storageTariff = findTariff(tariffs, product.storeId, "STORAGE", cat, date);
   const lastMileTariff = findTariff(tariffs, product.storeId, "LAST_MILE", cat, date);
 
-  // Commission: product-level API data takes priority over generic tariff
-  const commissionPct = product.commissionPct ?? commissionTariff?.value ?? 0;
+  // Commission: schema-aware — prefer API-sourced rate, fall back to tariff
+  const commissionPct =
+    schema === "FBS"
+      ? (product.fbsCommissionPct ?? product.commissionPct ?? commissionTariff?.value ?? 0)
+      : (product.commissionPct ?? commissionTariff?.value ?? 0);
   const commission = revenue > 0 ? (revenue * commissionPct) / 100 : 0;
   const acquiring = acquiringTariff ? (revenue * acquiringTariff.value) / 100 : 0;
 
-  // Logistics: manual tariff → Ozon FBO table (when API commission data present) → 0
+  // Logistics: manual tariff always wins; FBO table only for FBO schema; FBS = 0 if no tariff
   let logistics: number;
   if (logisticsTariff) {
     logistics = applyLogisticsTariff(logisticsTariff, product);
-  } else if (product.commissionPct) {
-    // FBO: use volume-based tariff table (Тарифы по умолчанию, May 2025)
+  } else if (schema === "FBO" && product.commissionPct) {
+    // FBO: use embedded Ozon volume-based tariff table (Тарифы по умолчанию, May 2025)
     logistics = ozonFboDelivery(productVolumeLiters(product), revenue);
   } else {
     logistics = 0;
